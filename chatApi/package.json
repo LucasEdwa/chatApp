@@ -1,0 +1,26 @@
+{
+  "name": "chatapi",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "ts-node index.ts",
+    "start": "ts-node index.ts --watch"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.7.4",
+    "typescript": "^5.0.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "@types/socket.io": "^3.0.2",
+    "@types/cors": "^2.8.17",
+    "ts-node": "^10.9.1"
+  }
+}

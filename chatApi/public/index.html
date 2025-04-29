@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.IO Test</title>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script>
+        const socket = io('http://localhost:3000');
+        
+        socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+
+        socket.on('welcome', (msg) => {
+            console.log('Received:', msg);
+        });
+    </script>
+</head>
+<body>
+    <h1>Check the browser console</h1>
+</body>
+</html> 
