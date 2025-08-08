@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { IMessage, IUser } from '../models/Interfaces';
+import { IMessage, IUser, ITypingUser } from '../models/Interfaces';
 
 export class ChatService {
   private socket: Socket | null = null;
@@ -9,6 +9,8 @@ export class ChatService {
   private usersListCallbacks: ((users: IUser[]) => void)[] = [];
   private privateChatStartedCallbacks: ((data: { roomId: string, participant: IUser, messages: IMessage[] }) => void)[] = [];
   private privateChatInvitationCallbacks: ((data: { roomId: string, participant: IUser, messages: IMessage[] }) => void)[] = [];
+  private userTypingCallbacks: ((user: ITypingUser) => void)[] = [];
+  private userStoppedTypingCallbacks: ((data: { userId: string, roomId?: string }) => void)[] = [];
 
   connect(userName: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -31,6 +33,8 @@ export class ChatService {
         this.socket.on('private-chat-started', this.handlePrivateChatStarted.bind(this));
         this.socket.on('private-chat-invitation', this.handlePrivateChatInvitation.bind(this));
         this.socket.on('join-private-room', this.joinPrivateRoom.bind(this));
+        this.socket.on('user-typing', this.handleUserTyping.bind(this));
+        this.socket.on('user-stopped-typing', this.handleUserStoppedTyping.bind(this));
 
         this.socket.emit('user-connected', userName);
       } catch (error) {
@@ -67,6 +71,14 @@ export class ChatService {
     this.privateChatInvitationCallbacks.forEach(callback => callback(data));
   }
 
+  private handleUserTyping(user: ITypingUser) {
+    this.userTypingCallbacks.forEach(callback => callback(user));
+  }
+
+  private handleUserStoppedTyping(data: { userId: string, roomId?: string }) {
+    this.userStoppedTypingCallbacks.forEach(callback => callback(data));
+  }
+
   private joinPrivateRoom(roomId: string) {
     if (this.socket) {
       this.socket.emit('join-private-room', roomId);
@@ -88,6 +100,18 @@ export class ChatService {
   joinPrivateChatRoom(roomId: string): void {
     if (this.socket) {
       this.socket.emit('join-private-room', roomId);
+    }
+  }
+
+  startTyping(roomId?: string): void {
+    if (this.socket) {
+      this.socket.emit('typing-start', { roomId });
+    }
+  }
+
+  stopTyping(roomId?: string): void {
+    if (this.socket) {
+      this.socket.emit('typing-stop', { roomId });
     }
   }
 
@@ -113,6 +137,14 @@ export class ChatService {
 
   onPrivateChatInvitation(callback: (data: { roomId: string, participant: IUser, messages: IMessage[] }) => void): void {
     this.privateChatInvitationCallbacks.push(callback);
+  }
+
+  onUserTyping(callback: (user: ITypingUser) => void): void {
+    this.userTypingCallbacks.push(callback);
+  }
+
+  onUserStoppedTyping(callback: (data: { userId: string, roomId?: string }) => void): void {
+    this.userStoppedTypingCallbacks.push(callback);
   }
 
   requestUsersList(): void {

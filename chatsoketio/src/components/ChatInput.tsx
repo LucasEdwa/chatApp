@@ -2,17 +2,25 @@ import React, { useState, FormEvent, useRef, useEffect } from 'react';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
+  onTypingStart?: (roomId?: string) => void;
+  onTypingStop?: (roomId?: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  roomId?: string; // For private chat typing
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({ 
-  onSendMessage, 
+  onSendMessage,
+  onTypingStart,
+  onTypingStop,
   disabled = false, 
-  placeholder = "Type your message..." 
+  placeholder = "Type your message...",
+  roomId
 }) => {
   const [message, setMessage] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!disabled && inputRef.current) {
@@ -20,9 +28,52 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   }, [disabled]);
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setMessage(value);
+
+
+    // Handle typing indicators
+    if (value.trim() && !isTyping) {
+      setIsTyping(true);
+      onTypingStart?.(roomId);
+    }
+
+    // Clear existing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Set new timeout to stop typing after 1 second of inactivity
+    typingTimeoutRef.current = setTimeout(() => {
+      if (isTyping) {
+        setIsTyping(false);
+        onTypingStop?.(roomId);
+      }
+    }, 1000);
+
+    // If input is empty, immediately stop typing
+    if (!value.trim() && isTyping) {
+      setIsTyping(false);
+      onTypingStop?.(roomId);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    }
+  };
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!message.trim() || disabled) return;
+    
+    // Stop typing when sending message
+    if (isTyping) {
+      setIsTyping(false);
+      onTypingStop?.(roomId);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    }
     
     onSendMessage(message);
     setMessage('');
@@ -49,7 +100,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             ref={inputRef}
             type="text"
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={handleInputChange}
             onKeyPress={handleKeyPress}
             placeholder={placeholder}
             disabled={disabled}

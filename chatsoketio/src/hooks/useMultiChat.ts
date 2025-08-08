@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { IMessage, IUser, IChatContext } from '../models/Interfaces';
+import { IMessage, IUser, IChatContext, ITypingUser } from '../models/Interfaces';
 import { chatService } from '../services/ChatService';
 import { notificationService } from '../services/NotificationService';
 
@@ -7,6 +7,7 @@ export const useMultiChat = (userName: string) => {
   const [publicMessages, setPublicMessages] = useState<IMessage[]>([]);
   const [privateChats, setPrivateChats] = useState<Map<string, IMessage[]>>(new Map());
   const [users, setUsers] = useState<IUser[]>([]);
+  const [typingUsers, setTypingUsers] = useState<ITypingUser[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -151,12 +152,32 @@ export const useMultiChat = (userName: string) => {
         });
       };
 
+      const handleUserTyping = (user: ITypingUser) => {
+        setTypingUsers(prev => {
+          // Remove if already exists, then add to avoid duplicates
+          const filtered = prev.filter(u => u.id !== user.id || u.roomId !== user.roomId);
+          const newUsers = [...filtered, user];
+          return newUsers;
+        });
+      };
+
+      const handleUserStoppedTyping = (data: { userId: string, roomId?: string }) => {
+        setTypingUsers(prev => {
+          const filtered = prev.filter(user => 
+            !(user.id === data.userId && user.roomId === data.roomId)
+          );
+          return filtered;
+        });
+      };
+
       chatService.onMessage(handleMessage);
       chatService.onPrivateMessage(handlePrivateMessage);
       chatService.onConnection(handleConnection);
       chatService.onUsersList(handleUsersList);
       chatService.onPrivateChatStarted(handlePrivateChatStarted);
       chatService.onPrivateChatInvitation(handlePrivateChatInvitation);
+      chatService.onUserTyping(handleUserTyping);
+      chatService.onUserStoppedTyping(handleUserStoppedTyping);
 
       chatService.connect(userName).catch(() => {
         setIsLoading(false);
@@ -188,6 +209,14 @@ export const useMultiChat = (userName: string) => {
     chatService.startPrivateChat(targetUserId);
   }, []);
 
+  const handleTypingStart = useCallback((roomId?: string) => {
+    chatService.startTyping(roomId);
+  }, []);
+
+  const handleTypingStop = useCallback((roomId?: string) => {
+    chatService.stopTyping(roomId);
+  }, []);
+
   const switchToChat = useCallback((context: IChatContext) => {
     setActiveChat(context);
     
@@ -210,11 +239,21 @@ export const useMultiChat = (userName: string) => {
     return publicMessages;
   };
 
+  const getCurrentTypingUsers = (): ITypingUser[] => {
+    if (activeChat.isPrivate) {
+      return typingUsers.filter(user => user.roomId === activeChat.id);
+    }
+    return typingUsers.filter(user => !user.roomId);
+  };
+
   return {
     messages: getCurrentMessages(),
     users,
+    typingUsers: getCurrentTypingUsers(),
     sendMessage,
     startPrivateChat,
+    handleTypingStart,
+    handleTypingStop,
     isConnected,
     userId,
     isLoading,

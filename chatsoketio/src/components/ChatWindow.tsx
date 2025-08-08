@@ -1,15 +1,18 @@
 import React, { useEffect, useRef } from 'react';
-import { IMessage } from '../models/Interfaces';
+import { IMessage, ITypingUser } from '../models/Interfaces';
 import { ChatMessage } from './ChatMessage';
+import { TypingIndicator } from './TypingIndicator';
 
 interface ChatWindowProps {
   messages: IMessage[];
+  typingUsers?: ITypingUser[];
   currentUserId: string | null;
   isLoading?: boolean;
 }
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({ 
   messages, 
+  typingUsers = [],
   currentUserId, 
   isLoading = false 
 }) => {
@@ -20,7 +23,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [messages, typingUsers]);
 
   if (isLoading) {
     return (
@@ -68,6 +71,15 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               isOwnMessage={message.userId === currentUserId}
             />
           ))}
+          
+          {/* Typing indicator */}
+          {typingUsers.length > 0 && (
+            <TypingIndicator 
+              typingUsers={typingUsers} 
+              currentUserId={currentUserId} 
+            />
+          )}
+          
           <div ref={messagesEndRef} />
         </>
       )}

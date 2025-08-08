@@ -11,8 +11,11 @@ function App() {
   const { 
     messages, 
     users, 
+    typingUsers,
     sendMessage, 
     startPrivateChat,
+    handleTypingStart,
+    handleTypingStop,
     isConnected, 
     userId, 
     isLoading,
@@ -68,12 +71,16 @@ function App() {
               
               <ChatWindow 
                 messages={messages} 
+                typingUsers={typingUsers}
                 currentUserId={userId} 
                 isLoading={isLoading}
               />
               
               <ChatInput 
-                onSendMessage={sendMessage} 
+                onSendMessage={sendMessage}
+                onTypingStart={handleTypingStart}
+                onTypingStop={handleTypingStop}
+                roomId={activeChat.isPrivate ? activeChat.id : undefined}
                 disabled={!isConnected || isLoading}
                 placeholder={isConnected 
                   ? `Type your message to ${activeChat.name}...` 
