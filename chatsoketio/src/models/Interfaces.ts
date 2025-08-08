@@ -5,3 +5,8 @@ export interface IMessage {
   userId?: string;
   isSystemMessage?: boolean;
 }
+
+export interface IUser {
+  id: string;
+  name: string;
+}

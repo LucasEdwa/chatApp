@@ -50,6 +50,10 @@ io.on('connection', (socket: Socket) => {
 
     // Emit to everyone (including the joining user)
     io.emit('user-joined', joinMessage);
+    
+    // Send updated users list to all clients
+    const usersList = Array.from(users.entries()).map(([id, name]) => ({ id, name }));
+    io.emit('users-list', usersList);
   });
 
   socket.on('disconnect', () => {
@@ -69,6 +73,10 @@ io.on('connection', (socket: Socket) => {
 
     // Broadcast to everyone except the leaving user
     socket.broadcast.emit('user-left', leaveMessage);
+    
+    // Send updated users list to all remaining clients
+    const usersList = Array.from(users.entries()).map(([id, name]) => ({ id, name }));
+    io.emit('users-list', usersList);
   });
 });
 
