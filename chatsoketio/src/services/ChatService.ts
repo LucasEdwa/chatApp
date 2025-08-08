@@ -16,7 +16,8 @@ export class ChatService {
     return new Promise((resolve, reject) => {
       try {
         this.socket = io(import.meta.env.VITE_CHAT_API_URL, {
-          transports: ['websocket']
+          transports: ['websocket'],
+          secure: true
         });
 
         this.socket.on('connect', () => {
