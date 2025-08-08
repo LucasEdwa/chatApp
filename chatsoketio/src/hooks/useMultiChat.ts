@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { IMessage, IUser, IChatContext } from '../models/Interfaces';
 import { chatService } from '../services/ChatService';
+import { notificationService } from '../services/NotificationService';
 
 export const useMultiChat = (userName: string) => {
   const [publicMessages, setPublicMessages] = useState<IMessage[]>([]);
@@ -27,6 +28,27 @@ export const useMultiChat = (userName: string) => {
       const handleMessage = (message: IMessage) => {
         if (!message.isPrivate) {
           setPublicMessages(prev => [...prev, message]);
+          
+          // Add unread count if not in public chat and message is not from current user
+          setActiveChat(currentActiveChat => {
+            if (currentActiveChat.isPrivate && message.userId !== userId) {
+              setChatContexts(prev => 
+                prev.map(ctx => 
+                  ctx.id === 'public' 
+                    ? { ...ctx, unreadCount: (ctx.unreadCount || 0) + 1 }
+                    : ctx
+                )
+              );
+              
+              // Show browser notification
+              notificationService.showMessageNotification(
+                message.userName, 
+                message.message, 
+                false
+              );
+            }
+            return currentActiveChat;
+          });
         }
       };
 
@@ -37,6 +59,27 @@ export const useMultiChat = (userName: string) => {
             const existingMessages = newChats.get(message.roomId!) || [];
             newChats.set(message.roomId!, [...existingMessages, message]);
             return newChats;
+          });
+
+          // Add unread count if not in the current private chat and message is not from current user
+          setActiveChat(currentActiveChat => {
+            if (currentActiveChat.id !== message.roomId && message.userId !== userId) {
+              setChatContexts(prev => 
+                prev.map(ctx => 
+                  ctx.id === message.roomId 
+                    ? { ...ctx, unreadCount: (ctx.unreadCount || 0) + 1 }
+                    : ctx
+                )
+              );
+              
+              // Show browser notification
+              notificationService.showMessageNotification(
+                message.userName, 
+                message.message, 
+                true
+              );
+            }
+            return currentActiveChat;
           });
         }
       };
