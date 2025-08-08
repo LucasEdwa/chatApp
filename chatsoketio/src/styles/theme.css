@@ -1,0 +1,55 @@
+/* Theme CSS Variables */
+:root {
+  /* Default light theme values */
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-primary: #ffffff;
+  --color-textPrimary: #1e293b;
+  --color-textSecondary: #475569;
+  --color-textMuted: #64748b;
+  --color-accent: #3b82f6;
+  --color-messageSent: #3b82f6;
+  --color-messageReceived: #f1f5f9;
+  --color-messageText: #ffffff;
+  --color-border: #e2e8f0;
+  --color-online: #10b981;
+  --color-error: #ef4444;
+}
+
+/* Smooth transitions for theme changes */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Base body styling */
+body {
+  background-color: var(--color-background);
+  color: var(--color-textPrimary);
+}
+
+/* Theme-specific body classes */
+body.theme-light {
+  color-scheme: light;
+}
+
+body.theme-dark {
+  color-scheme: dark;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-textMuted);
+}

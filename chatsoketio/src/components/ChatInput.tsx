@@ -36,7 +36,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   return (
-    <div className="border-t bg-white p-4">
+    <div 
+      className="border-t p-4"
+      style={{
+        backgroundColor: 'var(--color-background)',
+        borderColor: 'var(--color-border)'
+      }}
+    >
       <form onSubmit={handleSubmit} className="flex gap-3 items-end">
         <div className="flex-1 relative">
           <input
@@ -47,18 +53,31 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onKeyPress={handleKeyPress}
             placeholder={placeholder}
             disabled={disabled}
-            className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+            className="w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:border-transparent resize-none disabled:cursor-not-allowed"
+            style={{
+              backgroundColor: 'var(--color-surface)',
+              borderColor: 'var(--color-border)',
+              color: 'var(--color-textPrimary)',
+              '--tw-ring-color': 'var(--color-accent)'
+            } as React.CSSProperties}
             autoComplete="off"
             maxLength={1000}
           />
-          <div className="absolute right-3 bottom-3 text-xs text-gray-400">
+          <div 
+            className="absolute right-3 bottom-3 text-xs"
+            style={{ color: 'var(--color-textMuted)' }}
+          >
             {message.length}/1000
           </div>
         </div>
         <button
           type="submit"
           disabled={disabled || !message.trim()}
-          className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white p-3 rounded-full transition-all duration-200 transform hover:scale-105 active:scale-95"
+          className="p-3 rounded-full transition-all duration-200 transform hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+          style={{
+            backgroundColor: 'var(--color-accent)',
+            color: 'white'
+          }}
           title="Send message (Enter)"
         >
           <svg
