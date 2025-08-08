@@ -42,20 +42,20 @@ export const UsersList: React.FC<UsersListProps> = ({
   return (
     <>
       {/* Mobile overlay backdrop */}
-      {isVisible && (
+      {isVisible && isMobile && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
           onClick={onToggle}
         />
       )}
       
       <aside 
         className={`
-          fixed md:relative top-0 right-0 md:right-auto h-full z-50 md:z-auto
+          ${isMobile ? 'fixed' : 'relative'} top-0 right-0 h-full z-50
           border-l backdrop-blur-sm transition-all duration-300 ease-in-out overflow-hidden
           ${isVisible 
-            ? 'w-full max-w-sm md:w-80 opacity-100 translate-x-0' 
-            : 'w-full max-w-sm md:w-0 opacity-0 translate-x-full md:translate-x-0 border-l-0'
+            ? `${isMobile ? 'w-full max-w-sm' : 'w-80'} opacity-100 translate-x-0` 
+            : `${isMobile ? 'w-full max-w-sm' : 'w-0'} opacity-0 ${isMobile ? 'translate-x-full' : ''} border-l-0`
           }
         `}
         style={{
@@ -64,7 +64,7 @@ export const UsersList: React.FC<UsersListProps> = ({
           boxShadow: isVisible ? '-2px 0 8px rgba(0, 0, 0, 0.1)' : 'none'
         }}
       >
-        <div className="h-full flex flex-col w-full md:w-80">
+        <div className={`h-full flex flex-col ${isMobile ? 'w-full' : 'w-80'}`}>
         {/* Header with search */}
         <UsersListHeader userCount={users.length} onToggle={onToggle}>
           <SearchBar
