@@ -1,4 +1,9 @@
-import React, { useState, FormEvent, useRef, useEffect } from 'react';
+import React from 'react';
+import { MessageInputField } from './ChatInput/MessageInputField';
+import { SendButton } from './ChatInput/SendButton';
+import { TypingIndicator } from './ChatInput/TypingIndicator';
+import { QuickActions } from './ChatInput/QuickActions';
+import { useMessageInput } from './ChatInput/useMessageInput';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -6,7 +11,10 @@ interface ChatInputProps {
   onTypingStop?: (roomId?: string) => void;
   disabled?: boolean;
   placeholder?: string;
-  roomId?: string; // For private chat typing
+  roomId?: string;
+  showTypingIndicator?: boolean;
+  showQuickActions?: boolean;
+  maxLength?: number;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({ 
@@ -15,137 +23,98 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onTypingStop,
   disabled = false, 
   placeholder = "Type your message...",
-  roomId
+  roomId,
+  showTypingIndicator = true,
+  showQuickActions = false,
+  maxLength = 1000
 }) => {
-  const [message, setMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    if (!disabled && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [disabled]);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setMessage(value);
-
-
-    // Handle typing indicators
-    if (value.trim() && !isTyping) {
-      setIsTyping(true);
-      onTypingStart?.(roomId);
-    }
-
-    // Clear existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    // Set new timeout to stop typing after 1 second of inactivity
-    typingTimeoutRef.current = setTimeout(() => {
-      if (isTyping) {
-        setIsTyping(false);
-        onTypingStop?.(roomId);
-      }
-    }, 1000);
-
-    // If input is empty, immediately stop typing
-    if (!value.trim() && isTyping) {
-      setIsTyping(false);
-      onTypingStop?.(roomId);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    }
-  };
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!message.trim() || disabled) return;
-    
-    // Stop typing when sending message
-    if (isTyping) {
-      setIsTyping(false);
-      onTypingStop?.(roomId);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    }
-    
-    onSendMessage(message);
-    setMessage('');
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
+  const {
+    message,
+    isTyping,
+    inputRef,
+    handleInputChange,
+    handleSubmit,
+    handleKeyPress,
+    hasMessage,
+    characterCount,
+    isNearLimit
+  } = useMessageInput({
+    onSendMessage,
+    onTypingStart,
+    onTypingStop,
+    roomId,
+    disabled,
+    maxLength
+  });
 
   return (
     <div 
-      className="border-t p-4"
+      className="relative border-t backdrop-blur-sm"
       style={{
         backgroundColor: 'var(--color-background)',
-        borderColor: 'var(--color-border)'
+        borderColor: 'var(--color-border)',
+        boxShadow: '0 -1px 3px rgba(0, 0, 0, 0.1)'
       }}
     >
-      <form onSubmit={handleSubmit} className="flex gap-3 items-end">
-        <div className="flex-1 relative">
-          <input
+      {/* Typing Indicator */}
+      {showTypingIndicator && (
+        <div className="absolute -top-12 left-4 z-10">
+          <TypingIndicator isTyping={isTyping} />
+        </div>
+      )}
+
+      {/* Input Form */}
+      <div className="p-4">
+        <form onSubmit={handleSubmit} className="flex gap-3 items-end">
+          {/* Quick Actions */}
+          {showQuickActions && (
+            <QuickActions
+              disabled={disabled}
+              showEmoji={true}
+              showAttachment={false}
+              showVoice={false}
+            />
+          )}
+
+          {/* Message Input */}
+          <MessageInputField
             ref={inputRef}
-            type="text"
             value={message}
             onChange={handleInputChange}
             onKeyPress={handleKeyPress}
             placeholder={placeholder}
             disabled={disabled}
-            className="w-full px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:border-transparent resize-none disabled:cursor-not-allowed"
-            style={{
-              backgroundColor: 'var(--color-surface)',
-              borderColor: 'var(--color-border)',
-              color: 'var(--color-textPrimary)',
-              '--tw-ring-color': 'var(--color-accent)'
-            } as React.CSSProperties}
-            autoComplete="off"
-            maxLength={1000}
+            maxLength={maxLength}
           />
+
+          {/* Send Button */}
+          <SendButton
+            disabled={disabled}
+            hasMessage={hasMessage}
+          />
+        </form>
+
+        {/* Character limit warning */}
+        {isNearLimit && (
           <div 
-            className="absolute right-3 bottom-3 text-xs"
-            style={{ color: 'var(--color-textMuted)' }}
+            className="mt-2 text-xs text-center transition-all duration-200"
+            style={{ color: 'var(--color-error)' }}
           >
-            {message.length}/1000
+            {maxLength - characterCount} characters remaining
           </div>
-        </div>
-        <button
-          type="submit"
-          disabled={disabled || !message.trim()}
-          className="p-3 rounded-full transition-all duration-200 transform hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-          style={{
-            backgroundColor: 'var(--color-accent)',
-            color: 'white'
-          }}
-          title="Send message (Enter)"
-        >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-            />
-          </svg>
-        </button>
-      </form>
+        )}
+      </div>
+
+      {/* Enhanced gradient border */}
+      <div 
+        className="absolute top-0 left-0 right-0 h-px"
+        style={{
+          background: `linear-gradient(to right, transparent, ${
+            hasMessage ? 'var(--color-accent)' : 'var(--color-border)'
+          }, transparent)`,
+          opacity: hasMessage ? 0.8 : 0.3
+        }}
+      />
     </div>
   );
 };

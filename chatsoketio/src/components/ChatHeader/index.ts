@@ -1,0 +1,9 @@
+// Export all ChatHeader related components
+export { UserAvatar } from './UserAvatar';
+export { ConnectionStatus } from './ConnectionStatus';
+export { RoomTitle } from './RoomTitle';
+export { OnlineUsersButton } from './OnlineUsersButton';
+export { UserInfo } from './UserInfo';
+export { LeftSection } from './LeftSection';
+export { RightSection } from './RightSection';
+export { HeaderGradient } from './HeaderGradient';
