@@ -40,7 +40,6 @@ const getOrCreatePrivateChatRoom = (userId1: string, userId2: string): IPrivateC
       createdAt: new Date()
     };
     privateChatRooms.set(roomId, newRoom);
-    console.log('💬 Created new private chat room:', roomId);
   }
   
   return privateChatRooms.get(roomId)!;
@@ -49,12 +48,10 @@ const getOrCreatePrivateChatRoom = (userId1: string, userId2: string): IPrivateC
 app.use(cors());
 
 io.on('connection', (socket: Socket) => {
-  console.log('👤 User connected:', socket.id, 'Total connections:', users.size + 1);
   
   // Send current users list to the newly connected client
   const currentUsersList = getCurrentUsersList();
   socket.emit('users-list', currentUsersList);
-  console.log('📤 Sent current users list to new connection:', currentUsersList);
   
   // on user connected i want to send a message to the user using IMessage interface
   // socket.on makes it a client side event listener and it will be triggered when the client sends a message to the server
@@ -66,7 +63,6 @@ io.on('connection', (socket: Socket) => {
   //io.emit is used to emit a message to all the clients
 
   socket.on('send-chat-message', (msg: IMessage) => {
-    console.log('📨 Received message:', msg);
     
     if (msg.isPrivate && msg.roomId) {
       // Handle private message
@@ -80,7 +76,6 @@ io.on('connection', (socket: Socket) => {
           io.to(participantId).emit('private-message', msg);
         });
         
-        console.log('🔒 Private message sent to room:', msg.roomId);
       }
     } else {
       // Handle public message
@@ -118,13 +113,11 @@ io.on('connection', (socket: Socket) => {
       messages: room.messages
     });
     
-    console.log('💬 Private chat started between:', currentUser.name, 'and', targetUser.name);
   });
 
   // Handle joining a private chat room
   socket.on('join-private-room', (roomId: string) => {
     socket.join(roomId);
-    console.log('🔑 User joined private room:', roomId);
   });
 
   // Handle getting private chat history
@@ -142,7 +135,6 @@ io.on('connection', (socket: Socket) => {
   socket.on('get-users-list', () => {
     const usersList = getCurrentUsersList();
     socket.emit('users-list', usersList);
-    console.log('📤 Sent users list on request:', usersList);
   });
 
   socket.on('user-connected', (userName: string) => {
@@ -152,7 +144,6 @@ io.on('connection', (socket: Socket) => {
     };
     
     users.set(socket.id, user);
-    console.log('👋 User joined:', userName, 'Total users:', users.size);
     
     // Send join message to all clients
     const joinMessage: IMessage = {
@@ -168,7 +159,6 @@ io.on('connection', (socket: Socket) => {
     
     // Send updated users list to all clients
     const usersList = getCurrentUsersList();
-    console.log('📤 Sending users list:', usersList);
     io.emit('users-list', usersList);
   });
 
@@ -177,7 +167,6 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     
     users.delete(socket.id);
-    console.log('👋 User disconnected:', user.name, 'Remaining users:', users.size);
     
     const leaveMessage: IMessage = {
       message: `${user.name} has left the chat.`,
@@ -192,7 +181,6 @@ io.on('connection', (socket: Socket) => {
     
     // Send updated users list to all remaining clients
     const usersList = getCurrentUsersList();
-    console.log('📤 Sending updated users list:', usersList);
     io.emit('users-list', usersList);
   });
 });
