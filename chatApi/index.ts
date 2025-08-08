@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
-import { IMessage, IUser } from './src/models/Interfaces';
+import { IMessage, IUser, IPrivateChatRoom } from './src/models/Interfaces';
 
 const app = express();
 const server = createServer(app);
@@ -15,10 +15,35 @@ const io = new Server(server, {
 
 // Keep track of connected users with their details
 const users = new Map<string, IUser>();
+// Keep track of private chat rooms
+const privateChatRooms = new Map<string, IPrivateChatRoom>();
 
 // Helper function to get current users list
 const getCurrentUsersList = (): IUser[] => {
   return Array.from(users.values());
+};
+
+// Helper function to generate private chat room ID
+const generatePrivateChatRoomId = (userId1: string, userId2: string): string => {
+  return [userId1, userId2].sort().join('-');
+};
+
+// Helper function to get or create private chat room
+const getOrCreatePrivateChatRoom = (userId1: string, userId2: string): IPrivateChatRoom => {
+  const roomId = generatePrivateChatRoomId(userId1, userId2);
+  
+  if (!privateChatRooms.has(roomId)) {
+    const newRoom: IPrivateChatRoom = {
+      id: roomId,
+      participants: [userId1, userId2],
+      messages: [],
+      createdAt: new Date()
+    };
+    privateChatRooms.set(roomId, newRoom);
+    console.log('💬 Created new private chat room:', roomId);
+  }
+  
+  return privateChatRooms.get(roomId)!;
 };
 
 app.use(cors());
@@ -42,7 +67,75 @@ io.on('connection', (socket: Socket) => {
 
   socket.on('send-chat-message', (msg: IMessage) => {
     console.log('📨 Received message:', msg);
-    io.emit('chat-message', msg);
+    
+    if (msg.isPrivate && msg.roomId) {
+      // Handle private message
+      const room = privateChatRooms.get(msg.roomId);
+      if (room) {
+        // Add message to room history
+        room.messages.push(msg);
+        
+        // Send to participants only
+        room.participants.forEach(participantId => {
+          io.to(participantId).emit('private-message', msg);
+        });
+        
+        console.log('🔒 Private message sent to room:', msg.roomId);
+      }
+    } else {
+      // Handle public message
+      io.emit('chat-message', msg);
+    }
+  });
+
+  // Handle starting a private chat
+  socket.on('start-private-chat', (targetUserId: string) => {
+    const currentUser = users.get(socket.id);
+    const targetUser = users.get(targetUserId);
+    
+    if (!currentUser || !targetUser) {
+      socket.emit('error', 'User not found');
+      return;
+    }
+    
+    const room = getOrCreatePrivateChatRoom(socket.id, targetUserId);
+    
+    // Join both users to the room
+    socket.join(room.id);
+    io.to(targetUserId).emit('join-private-room', room.id);
+    
+    // Send room info back to initiator
+    socket.emit('private-chat-started', {
+      roomId: room.id,
+      participant: targetUser,
+      messages: room.messages
+    });
+    
+    // Notify target user about new private chat
+    io.to(targetUserId).emit('private-chat-invitation', {
+      roomId: room.id,
+      participant: currentUser,
+      messages: room.messages
+    });
+    
+    console.log('💬 Private chat started between:', currentUser.name, 'and', targetUser.name);
+  });
+
+  // Handle joining a private chat room
+  socket.on('join-private-room', (roomId: string) => {
+    socket.join(roomId);
+    console.log('🔑 User joined private room:', roomId);
+  });
+
+  // Handle getting private chat history
+  socket.on('get-private-chat-history', (roomId: string) => {
+    const room = privateChatRooms.get(roomId);
+    if (room && room.participants.includes(socket.id)) {
+      socket.emit('private-chat-history', {
+        roomId: roomId,
+        messages: room.messages
+      });
+    }
   });
 
   // Handle request for users list

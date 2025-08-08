@@ -6,12 +6,14 @@ interface UsersListProps {
   currentUserId: string | null;
   isVisible: boolean;
   onToggle: () => void;
+  onStartPrivateChat?: (targetUserId: string) => void;
 }
 
 export const UsersList: React.FC<UsersListProps> = ({ 
   users, 
   currentUserId, 
-  isVisible, 
+  isVisible,
+  onStartPrivateChat
 }) => {
   const getInitials = (name: string) => {
     return name
@@ -42,6 +44,12 @@ export const UsersList: React.FC<UsersListProps> = ({
     return colors[Math.abs(hash) % colors.length];
   };
 
+  const handleUserClick = (user: IUser) => {
+    if (user.id !== currentUserId && onStartPrivateChat) {
+      onStartPrivateChat(user.id);
+    }
+  };
+
   return (
     <div className={`
       bg-white border-l border-gray-200 transition-all duration-300 ease-in-out overflow-hidden
@@ -59,6 +67,9 @@ export const UsersList: React.FC<UsersListProps> = ({
               Online Users ({users.length})
             </h3>
           </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Click on a user to start a private chat
+          </p>
         </div>
 
         {/* Users list */}
@@ -75,10 +86,11 @@ export const UsersList: React.FC<UsersListProps> = ({
               {users.map((user) => (
                 <div
                   key={user.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg mb-1 transition-colors ${
+                  onClick={() => handleUserClick(user)}
+                  className={`flex items-center gap-3 p-3 rounded-lg mb-1 transition-all duration-200 ${
                     user.id === currentUserId 
-                      ? 'bg-blue-50 border border-blue-200' 
-                      : 'hover:bg-gray-50'
+                      ? 'bg-blue-50 border border-blue-200 cursor-default' 
+                      : 'hover:bg-gray-50 hover:shadow-sm cursor-pointer transform hover:scale-[1.02]'
                   }`}
                 >
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold ${getAvatarColor(user.name)}`}>
@@ -98,8 +110,18 @@ export const UsersList: React.FC<UsersListProps> = ({
                     <div className="flex items-center gap-1 mt-1">
                       <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                       <span className="text-xs text-gray-500">Online</span>
+                      {user.id !== currentUserId && (
+                        <span className="text-xs text-blue-500 ml-2">Click to chat</span>
+                      )}
                     </div>
                   </div>
+                  {user.id !== currentUserId && (
+                    <div className="text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
