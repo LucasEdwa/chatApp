@@ -8,20 +8,35 @@ import dotenv from 'dotenv';
 dotenv.config();
 const app = express();
 const server = createServer(app);
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map(origin => origin.trim());
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN,
+    origin: '*',
     methods: ['GET', 'POST']
   }
 });
 
 app.use(cors());
 
+// Add a basic health check route
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Chat API is running!', 
+    timestamp: new Date().toISOString(),
+    port: PORT 
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
 io.on('connection', (socket: Socket) => {
   setupSocketHandlers(io, socket);
 });
 
-const PORT = process.env.PORT ;
+const PORT = process.env.PORT || 3000; // Default to 3000 if PORT is not set
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

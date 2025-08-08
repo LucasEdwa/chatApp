@@ -17,7 +17,10 @@ export class ChatService {
       try {
         this.socket = io(import.meta.env.VITE_CHAT_API_URL, {
           transports: ['websocket'],
-          secure: true
+          secure: true,
+          extraHeaders: {
+            'ngrok-skip-browser-warning': 'true'
+          }
         });
 
         this.socket.on('connect', () => {
