@@ -45,7 +45,7 @@ export const UserNameModal: React.FC<UserNameModalProps> = ({ isOpen, onSubmit }
       <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4 shadow-2xl">
         <div className="text-center mb-6">
           <div className="text-4xl mb-4">👋</div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">Welcome to Chat!</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Welcome to chee Chat!</h2>
           <p className="text-gray-600">Enter your name to join the conversation</p>
         </div>
         
