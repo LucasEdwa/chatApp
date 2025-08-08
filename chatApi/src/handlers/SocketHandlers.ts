@@ -1,69 +1,15 @@
-import express from 'express';
-import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
-import cors from 'cors';
-import { IMessage, IUser, IPrivateChatRoom } from './src/models/Interfaces';
+import { IMessage, IUser, ITypingUser } from '../models/Interfaces';
+import { users, privateChatRooms, typingUsers } from '../state/ChatState';
+import { getCurrentUsersList, getOrCreatePrivateChatRoom } from '../utils/ChatUtils';
+import { handleTypingStop } from '../utils/TypingUtils';
 
-const app = express();
-const server = createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: 'http://localhost:5173',
-    methods: ['GET', 'POST']
-  }
-});
-
-// Keep track of connected users with their details
-const users = new Map<string, IUser>();
-// Keep track of private chat rooms
-const privateChatRooms = new Map<string, IPrivateChatRoom>();
-
-// Helper function to get current users list
-const getCurrentUsersList = (): IUser[] => {
-  return Array.from(users.values());
-};
-
-// Helper function to generate private chat room ID
-const generatePrivateChatRoomId = (userId1: string, userId2: string): string => {
-  return [userId1, userId2].sort().join('-');
-};
-
-// Helper function to get or create private chat room
-const getOrCreatePrivateChatRoom = (userId1: string, userId2: string): IPrivateChatRoom => {
-  const roomId = generatePrivateChatRoomId(userId1, userId2);
-  
-  if (!privateChatRooms.has(roomId)) {
-    const newRoom: IPrivateChatRoom = {
-      id: roomId,
-      participants: [userId1, userId2],
-      messages: [],
-      createdAt: new Date()
-    };
-    privateChatRooms.set(roomId, newRoom);
-  }
-  
-  return privateChatRooms.get(roomId)!;
-};
-
-app.use(cors());
-
-io.on('connection', (socket: Socket) => {
-  
+export const setupSocketHandlers = (io: Server, socket: Socket) => {
   // Send current users list to the newly connected client
   const currentUsersList = getCurrentUsersList();
   socket.emit('users-list', currentUsersList);
-  
-  // on user connected i want to send a message to the user using IMessage interface
-  // socket.on makes it a client side event listener and it will be triggered when the client sends a message to the server
-  // the msg is the message that the client sends to the server
-  // the msg is an object that implements the IMessage interface
-  // the IMessage interface is defined in the src/models/Interfaces.ts file
-  // the IMessage interface is used to define the structure of the message that the client sends to the server
-  // the IMessage interface is used to define the structure of the message that the server sends to the client
-  //io.emit is used to emit a message to all the clients
 
   socket.on('send-chat-message', (msg: IMessage) => {
-    
     if (msg.isPrivate && msg.roomId) {
       // Handle private message
       const room = privateChatRooms.get(msg.roomId);
@@ -75,7 +21,6 @@ io.on('connection', (socket: Socket) => {
         room.participants.forEach(participantId => {
           io.to(participantId).emit('private-message', msg);
         });
-        
       }
     } else {
       // Handle public message
@@ -112,7 +57,6 @@ io.on('connection', (socket: Socket) => {
       participant: currentUser,
       messages: room.messages
     });
-    
   });
 
   // Handle joining a private chat room
@@ -129,6 +73,43 @@ io.on('connection', (socket: Socket) => {
         messages: room.messages
       });
     }
+  });
+
+  // Handle typing events
+  socket.on('typing-start', (data: { roomId?: string }) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const typingUser: ITypingUser = {
+      id: socket.id,
+      name: user.name,
+      roomId: data.roomId
+    };
+
+    // Clear existing timeout if user was already typing
+    if (typingUsers.has(socket.id)) {
+      clearTimeout(typingUsers.get(socket.id)!.timeout);
+    }
+
+    // Set new timeout to auto-stop typing after 3 seconds
+    const timeout = setTimeout(() => {
+      handleTypingStop(socket.id, data.roomId, io);
+    }, 3000);
+
+    typingUsers.set(socket.id, { timeout, user: typingUser });
+
+    // Emit typing status to appropriate users
+    if (data.roomId) {
+      // Private chat typing
+      socket.to(data.roomId).emit('user-typing', typingUser);
+    } else {
+      // Public chat typing
+      socket.broadcast.emit('user-typing', typingUser);
+    }
+  });
+
+  socket.on('typing-stop', (data: { roomId?: string }) => {
+    handleTypingStop(socket.id, data.roomId, io);
   });
 
   // Handle request for users list
@@ -166,6 +147,20 @@ io.on('connection', (socket: Socket) => {
     const user = users.get(socket.id);
     if (!user) return;
     
+    // Clean up typing status
+    if (typingUsers.has(socket.id)) {
+      const typingData = typingUsers.get(socket.id)!;
+      clearTimeout(typingData.timeout);
+      typingUsers.delete(socket.id);
+      
+      // Notify others that user stopped typing
+      if (typingData.user.roomId) {
+        io.to(typingData.user.roomId).emit('user-stopped-typing', { userId: socket.id, roomId: typingData.user.roomId });
+      } else {
+        io.emit('user-stopped-typing', { userId: socket.id });
+      }
+    }
+    
     users.delete(socket.id);
     
     const leaveMessage: IMessage = {
@@ -183,9 +178,4 @@ io.on('connection', (socket: Socket) => {
     const usersList = getCurrentUsersList();
     io.emit('users-list', usersList);
   });
-});
-
-const PORT = 3000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+};

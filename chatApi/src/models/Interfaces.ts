@@ -3,6 +3,12 @@ export interface IUser {
   name: string;
 }
 
+export interface ITypingUser {
+  id: string;
+  name: string;
+  roomId?: string; // For private chat typing
+}
+
 export interface IMessage {
   message: string;
   userId?: string;
