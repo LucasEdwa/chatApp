@@ -15,8 +15,10 @@ export class ChatService {
   connect(userName: string): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        this.socket = io(import.meta.env.VITE_CHAT_API_URL);
-        
+        this.socket = io(import.meta.env.VITE_CHAT_API_URL, {
+          transports: ['websocket']
+        });
+
         this.socket.on('connect', () => {
           const socketId = this.socket?.id;
           if (socketId) {
