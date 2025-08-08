@@ -15,7 +15,7 @@ export class ChatService {
   connect(userName: string): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        this.socket = io('http://localhost:3000');
+        this.socket = io(import.meta.env.VITE_CHAT_API_URL);
         
         this.socket.on('connect', () => {
           const socketId = this.socket?.id;
