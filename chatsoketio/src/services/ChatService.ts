@@ -62,6 +62,12 @@ export class ChatService {
     this.usersListCallbacks.push(callback);
   }
 
+  requestUsersList(): void {
+    if (this.socket) {
+      this.socket.emit('get-users-list');
+    }
+  }
+
   disconnect(): void {
     if (this.socket) {
       this.socket.disconnect();

@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
-import { IMessage } from './src/models/Interfaces';
+import { IMessage, IUser } from './src/models/Interfaces';
 
 const app = express();
 const server = createServer(app);
@@ -13,13 +13,23 @@ const io = new Server(server, {
   }
 });
 
-// Keep track of connected users
-const users = new Map<string, string>();
+// Keep track of connected users with their details
+const users = new Map<string, IUser>();
+
+// Helper function to get current users list
+const getCurrentUsersList = (): IUser[] => {
+  return Array.from(users.values());
+};
 
 app.use(cors());
 
 io.on('connection', (socket: Socket) => {
-  console.log('👤 User connected:', socket.id);
+  console.log('👤 User connected:', socket.id, 'Total connections:', users.size + 1);
+  
+  // Send current users list to the newly connected client
+  const currentUsersList = getCurrentUsersList();
+  socket.emit('users-list', currentUsersList);
+  console.log('📤 Sent current users list to new connection:', currentUsersList);
   
   // on user connected i want to send a message to the user using IMessage interface
   // socket.on makes it a client side event listener and it will be triggered when the client sends a message to the server
@@ -34,12 +44,24 @@ io.on('connection', (socket: Socket) => {
     console.log('📨 Received message:', msg);
     io.emit('chat-message', msg);
   });
+
+  // Handle request for users list
+  socket.on('get-users-list', () => {
+    const usersList = getCurrentUsersList();
+    socket.emit('users-list', usersList);
+    console.log('📤 Sent users list on request:', usersList);
+  });
+
   socket.on('user-connected', (userName: string) => {
-    users.set(socket.id, userName);
-    console.log('👋 User joined:', userName);
-    // i make a join message object that implements the IMessage interface
-    // the join message is a message that is sent to the client when they join the chat
-  
+    const user: IUser = {
+      id: socket.id,
+      name: userName
+    };
+    
+    users.set(socket.id, user);
+    console.log('👋 User joined:', userName, 'Total users:', users.size);
+    
+    // Send join message to all clients
     const joinMessage: IMessage = {
       message: `${userName} has joined the chat.`,
       userName: 'System',
@@ -52,19 +74,20 @@ io.on('connection', (socket: Socket) => {
     io.emit('user-joined', joinMessage);
     
     // Send updated users list to all clients
-    const usersList = Array.from(users.entries()).map(([id, name]) => ({ id, name }));
+    const usersList = getCurrentUsersList();
+    console.log('📤 Sending users list:', usersList);
     io.emit('users-list', usersList);
   });
 
   socket.on('disconnect', () => {
-    const userName = users.get(socket.id);
-    if (!userName) return;
+    const user = users.get(socket.id);
+    if (!user) return;
     
     users.delete(socket.id);
-    console.log('👋 User disconnected:', userName);
+    console.log('👋 User disconnected:', user.name, 'Remaining users:', users.size);
     
     const leaveMessage: IMessage = {
-      message: `${userName} has left the chat.`,
+      message: `${user.name} has left the chat.`,
       userName: 'System',
       timestamp: new Date(),
       userId: socket.id,
@@ -75,7 +98,8 @@ io.on('connection', (socket: Socket) => {
     socket.broadcast.emit('user-left', leaveMessage);
     
     // Send updated users list to all remaining clients
-    const usersList = Array.from(users.entries()).map(([id, name]) => ({ id, name }));
+    const usersList = getCurrentUsersList();
+    console.log('📤 Sending updated users list:', usersList);
     io.emit('users-list', usersList);
   });
 });
