@@ -6,6 +6,8 @@ import { setupSocketHandlers } from './handlers/SocketHandlers';
 // Importing the environment variables
 import dotenv from 'dotenv';
 dotenv.config();
+const PORT = process.env.PORT || 8080; 
+
 const app = express();
 const server = createServer(app);
 const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map(origin => origin.trim());
@@ -36,7 +38,6 @@ io.on('connection', (socket: Socket) => {
   setupSocketHandlers(io, socket);
 });
 
-const PORT = process.env.PORT || 3000; // Default to 3000 if PORT is not set
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
