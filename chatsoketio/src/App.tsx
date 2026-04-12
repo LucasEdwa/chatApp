@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useMultiChat } from './hooks';
-import { ChatHeader, ChatWindow, ChatInput, UserNameModal, UsersList, ChatTabs } from './components';
-import { ThemeProvider } from './contexts/ThemeContext';
+import { useMultiChat, ChatHeader, ChatWindow, ChatInput, ChatTabs } from './features/chat';
+import { UserNameModal, UsersList } from './features/users';
+import { ThemeProvider } from './features/theme';
 
 function App() {
   const [userName, setUserName] = useState<string | null>(null);
