@@ -3,33 +3,44 @@ import { IMessage, IUser, ITypingUser } from '../models/Interfaces';
 import { users, privateChatRooms, typingUsers } from '../state/ChatState';
 import { getCurrentUsersList, getOrCreatePrivateChatRoom } from '../utils/ChatUtils';
 import { handleTypingStop } from '../utils/TypingUtils';
+import { wrapSocketHandler } from '../middleware/errorHandler';
+import { sanitizeMessage, sanitizeUserName } from '../middleware/sanitize';
+
+const DEFAULT_PAGE_SIZE = 50;
 
 export const setupSocketHandlers = (io: Server, socket: Socket) => {
   // Send current users list to the newly connected client
   const currentUsersList = getCurrentUsersList();
   socket.emit('users-list', currentUsersList);
 
-  socket.on('send-chat-message', (msg: IMessage) => {
-    if (msg.isPrivate && msg.roomId) {
+  socket.on('send-chat-message', wrapSocketHandler((msg: IMessage) => {
+    // Sanitize message content to prevent XSS
+    const cleanMessage = sanitizeMessage(msg.message);
+    if (!cleanMessage) return;
+
+    const sanitizedMsg: IMessage = {
+      ...msg,
+      message: cleanMessage,
+      timestamp: new Date(),
+    };
+
+    if (sanitizedMsg.isPrivate && sanitizedMsg.roomId) {
       // Handle private message
-      const room = privateChatRooms.get(msg.roomId);
+      const room = privateChatRooms.get(sanitizedMsg.roomId);
       if (room) {
-        // Add message to room history
-        room.messages.push(msg);
-        
-        // Send to participants only
+        room.messages.push(sanitizedMsg);
         room.participants.forEach(participantId => {
-          io.to(participantId).emit('private-message', msg);
+          io.to(participantId).emit('private-message', sanitizedMsg);
         });
       }
     } else {
       // Handle public message
-      io.emit('chat-message', msg);
+      io.emit('chat-message', sanitizedMsg);
     }
-  });
+  }));
 
   // Handle starting a private chat
-  socket.on('start-private-chat', (targetUserId: string) => {
+  socket.on('start-private-chat', wrapSocketHandler((targetUserId: string) => {
     const currentUser = users.get(socket.id);
     const targetUser = users.get(targetUserId);
     
@@ -44,39 +55,47 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
     socket.join(room.id);
     io.to(targetUserId).emit('join-private-room', room.id);
     
-    // Send room info back to initiator
+    // Send room info back to initiator (paginated — last N messages)
     socket.emit('private-chat-started', {
       roomId: room.id,
       participant: targetUser,
-      messages: room.messages
+      messages: room.messages.slice(-DEFAULT_PAGE_SIZE),
     });
     
     // Notify target user about new private chat
     io.to(targetUserId).emit('private-chat-invitation', {
       roomId: room.id,
       participant: currentUser,
-      messages: room.messages
+      messages: room.messages.slice(-DEFAULT_PAGE_SIZE),
     });
-  });
+  }));
 
   // Handle joining a private chat room
-  socket.on('join-private-room', (roomId: string) => {
+  socket.on('join-private-room', wrapSocketHandler((roomId: string) => {
     socket.join(roomId);
-  });
+  }));
 
-  // Handle getting private chat history
-  socket.on('get-private-chat-history', (roomId: string) => {
+  // Handle getting private chat history with cursor-based pagination
+  socket.on('get-private-chat-history', wrapSocketHandler((data: { roomId: string; beforeIndex?: number; limit?: number }) => {
+    const roomId = typeof data === 'string' ? data : data.roomId;
     const room = privateChatRooms.get(roomId);
-    if (room && room.participants.includes(socket.id)) {
-      socket.emit('private-chat-history', {
-        roomId: roomId,
-        messages: room.messages
-      });
-    }
-  });
+
+    if (!room || !room.participants.includes(socket.id)) return;
+
+    const limit = Math.min(data.limit || DEFAULT_PAGE_SIZE, 100);
+    const endIndex = data.beforeIndex ?? room.messages.length;
+    const startIndex = Math.max(0, endIndex - limit);
+
+    socket.emit('private-chat-history', {
+      roomId,
+      messages: room.messages.slice(startIndex, endIndex),
+      hasMore: startIndex > 0,
+      nextCursor: startIndex > 0 ? startIndex : null,
+    });
+  }));
 
   // Handle typing events
-  socket.on('typing-start', (data: { roomId?: string }) => {
+  socket.on('typing-start', wrapSocketHandler((data: { roomId?: string }) => {
     const user = users.get(socket.id);
     if (!user) return;
 
@@ -100,48 +119,50 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
 
     // Emit typing status to appropriate users
     if (data.roomId) {
-      // Private chat typing
       socket.to(data.roomId).emit('user-typing', typingUser);
     } else {
-      // Public chat typing
       socket.broadcast.emit('user-typing', typingUser);
     }
-  });
+  }));
 
-  socket.on('typing-stop', (data: { roomId?: string }) => {
+  socket.on('typing-stop', wrapSocketHandler((data: { roomId?: string }) => {
     handleTypingStop(socket.id, data.roomId, io);
-  });
+  }));
 
   // Handle request for users list
-  socket.on('get-users-list', () => {
+  socket.on('get-users-list', wrapSocketHandler(() => {
     const usersList = getCurrentUsersList();
     socket.emit('users-list', usersList);
-  });
+  }));
 
-  socket.on('user-connected', (userName: string) => {
+  socket.on('user-connected', wrapSocketHandler((userName: string) => {
+    // Sanitize username to prevent XSS
+    const cleanName = sanitizeUserName(userName);
+    if (!cleanName) {
+      socket.emit('error', 'Invalid username. Must be 2–20 characters.');
+      return;
+    }
+
     const user: IUser = {
       id: socket.id,
-      name: userName
+      name: cleanName,
     };
     
     users.set(socket.id, user);
     
-    // Send join message to all clients
     const joinMessage: IMessage = {
-      message: `${userName} has joined the chat.`,
+      message: `${cleanName} has joined the chat.`,
       userName: 'System',
       timestamp: new Date(),
       userId: socket.id,
       isSystemMessage: true
     };
 
-    // Emit to everyone (including the joining user)
     io.emit('user-joined', joinMessage);
     
-    // Send updated users list to all clients
     const usersList = getCurrentUsersList();
     io.emit('users-list', usersList);
-  });
+  }));
 
   socket.on('disconnect', () => {
     const user = users.get(socket.id);
@@ -153,7 +174,6 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
       clearTimeout(typingData.timeout);
       typingUsers.delete(socket.id);
       
-      // Notify others that user stopped typing
       if (typingData.user.roomId) {
         io.to(typingData.user.roomId).emit('user-stopped-typing', { userId: socket.id, roomId: typingData.user.roomId });
       } else {
@@ -171,10 +191,8 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
       isSystemMessage: true
     };
 
-    // Broadcast to everyone except the leaving user
     socket.broadcast.emit('user-left', leaveMessage);
     
-    // Send updated users list to all remaining clients
     const usersList = getCurrentUsersList();
     io.emit('users-list', usersList);
   });

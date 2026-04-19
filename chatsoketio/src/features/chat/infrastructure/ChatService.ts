@@ -19,6 +19,12 @@ export class ChatService {
         this.socket = io(import.meta.env.VITE_CHAT_API_URL, {
           transports: ['websocket'],
           secure: true,
+          // ── Reconnection & Heartbeat ──────────────────────
+          reconnection: true,              // Auto-reconnect on signal drop
+          reconnectionAttempts: 10,        // Try up to 10 times
+          reconnectionDelay: 1000,         // Start with 1s delay
+          reconnectionDelayMax: 10000,     // Cap at 10s between attempts
+          timeout: 20000,                  // 20s connection timeout
           extraHeaders: {
             'ngrok-skip-browser-warning': 'true'
           }
@@ -30,6 +36,21 @@ export class ChatService {
             this.connectionCallbacks.forEach(callback => callback(socketId));
             resolve(socketId);
           }
+        });
+
+        // Handle reconnection events for UI feedback
+        this.socket.io.on('reconnect', (attempt: number) => {
+          console.log(`Reconnected after ${attempt} attempt(s)`);
+          // Re-register user on reconnect so server knows who we are
+          this.socket?.emit('user-connected', userName);
+        });
+
+        this.socket.io.on('reconnect_attempt', (attempt: number) => {
+          console.log(`Reconnection attempt ${attempt}...`);
+        });
+
+        this.socket.io.on('reconnect_failed', () => {
+          console.error('Reconnection failed after all attempts');
         });
 
         this.socket.on('chat-message', this.handleMessage.bind(this));

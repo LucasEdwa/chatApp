@@ -84,7 +84,75 @@ Domain         (TypeScript interfaces)
 
 ---
 
-## Key Design Decisions
+## Security Hardening
+
+The backend implements several layers of defense following OWASP best practices:
+
+| Measure | Implementation |
+|---------|---------------|
+| **HTTP Header Security** | `helmet` sets `X-Content-Type-Options`, `X-Frame-Options`, CSP, HSTS, and more out of the box |
+| **XSS Prevention** | All user input (messages and usernames) is sanitized server-side via the `xss` library before broadcast |
+| **CORS Lockdown** | Strict origin allowlist (no more `origin: '*'`); credentials enabled for cookie support |
+| **Rate Limiting** | `express-rate-limit` — 100 requests per 15-minute window per IP on all HTTP endpoints |
+| **Input Validation** | Messages capped at 2 000 chars; usernames 2–20 chars; both validated + sanitized before processing |
+| **Graceful Shutdown** | `SIGTERM`/`SIGINT` handlers close Socket.IO and HTTP server cleanly (zero dropped connections on deploy) |
+
+### Centralized Error Handling
+
+Instead of scattered `try/catch` blocks, the backend uses:
+
+- **`errorHandler` middleware** — A single Express error handler that catches all route errors and returns consistent JSON responses. Operational errors (`AppError`) return meaningful status codes; unexpected errors return `500` without leaking internals.
+- **`wrapSocketHandler`** — A higher-order function that wraps every Socket.IO event handler with error boundary logic, preventing one bad event from crashing the process.
+
+```
+src/middleware/
+  errorHandler.ts   →  AppError class + Express error middleware + Socket.IO error wrapper
+  sanitize.ts       →  XSS sanitization for messages and usernames
+```
+
+---
+
+## Connection Resilience (Heartbeat & Reconnection)
+
+Real-time apps need to survive unstable networks. The server and client are configured for this:
+
+### Server-Side (Socket.IO)
+- **`pingInterval: 25000`** — Server pings every 25s to verify the client is alive
+- **`pingTimeout: 20000`** — Client has 20s to respond before being considered disconnected
+- **`connectionStateRecovery`** — If a client reconnects within **30 seconds**, Socket.IO restores its rooms and buffered events automatically (no data loss on brief signal drops)
+
+### Client-Side (Socket.IO Client)
+- **`reconnection: true`** with up to **10 attempts**
+- **Exponential backoff**: starts at 1s, caps at 10s between retries
+- **Auto re-registration**: on reconnect, the client re-emits `user-connected` so the server rebuilds its presence state
+- **Reconnect lifecycle hooks**: `reconnect`, `reconnect_attempt`, and `reconnect_failed` events are logged for observability
+
+**What this means in practice:** If a user loses Wi-Fi for 10 seconds, the client automatically reconnects, re-identifies itself, and the server recovers its room memberships. No manual refresh needed.
+
+---
+
+## Message Pagination
+
+Private chat history supports **cursor-based pagination** to prevent loading thousands of messages at once:
+
+```
+Event: get-private-chat-history
+Payload: { roomId: string, beforeIndex?: number, limit?: number }
+
+Response: {
+  roomId: string,
+  messages: IMessage[],       // Paginated slice
+  hasMore: boolean,           // Are there older messages?
+  nextCursor: number | null   // Pass as beforeIndex to load more
+}
+```
+
+- Default page size: **50 messages**
+- Maximum page size: **100 messages**
+- When starting a private chat, only the **last 50 messages** are sent (not the full history)
+- The client can implement "load more" by passing `nextCursor` as `beforeIndex`
+
+---
 
 | Decision | Rationale |
 |----------|-----------|
@@ -146,7 +214,9 @@ Set `VITE_CHAT_API_URL` in the frontend `.env` to point to the backend URL.
 ## Future Improvements
 
 - Add a **persistence layer** (Redis or a database) so messages survive server restarts
-- Implement **authentication** (JWT or OAuth)
+- Implement **authentication** (JWT with HTTP-only cookies)
 - Add **message read receipts**
+- Migrate to **cursor-based pagination with database** (current in-memory pagination is index-based)
+- Add **Redis adapter** for horizontal scaling across multiple server instances
 - Write **unit and integration tests**
 - Add **rate limiting** on the backend to prevent spam
