@@ -21,6 +21,7 @@ export const useMultiChat = (userName: string) => {
     { id: 'public', name: 'Public Chat', isPrivate: false }
   ]);
   const hasConnected = useRef(false);
+  const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!hasConnected.current && userName) {
@@ -30,13 +31,13 @@ export const useMultiChat = (userName: string) => {
       const handleMessage = (message: IMessage) => {
         if (!message.isPrivate) {
           // Skip server echo for own messages — already added optimistically
-          if (message.clientMessageId && message.userId === userId) return;
+          if (message.clientMessageId && message.userId === userIdRef.current) return;
 
           setPublicMessages(prev => [...prev, message]);
           
           // Add unread count if not in public chat and message is not from current user
           setActiveChat(currentActiveChat => {
-            if (currentActiveChat.isPrivate && message.userId !== userId) {
+            if (currentActiveChat.isPrivate && message.userId !== userIdRef.current) {
               setChatContexts(prev => 
                 prev.map(ctx => 
                   ctx.id === 'public' 
@@ -60,7 +61,7 @@ export const useMultiChat = (userName: string) => {
       const handlePrivateMessage = (message: IMessage) => {
         if (message.roomId) {
           // Skip server echo for own messages — already added optimistically
-          if (message.clientMessageId && message.userId === userId) return;
+          if (message.clientMessageId && message.userId === userIdRef.current) return;
 
           setPrivateChats(prev => {
             const newChats = new Map(prev);
@@ -71,7 +72,7 @@ export const useMultiChat = (userName: string) => {
 
           // Add unread count if not in the current private chat and message is not from current user
           setActiveChat(currentActiveChat => {
-            if (currentActiveChat.id !== message.roomId && message.userId !== userId) {
+            if (currentActiveChat.id !== message.roomId && message.userId !== userIdRef.current) {
               setChatContexts(prev => 
                 prev.map(ctx => 
                   ctx.id === message.roomId 
@@ -93,6 +94,7 @@ export const useMultiChat = (userName: string) => {
       };
 
       const handleConnection = (id: string) => {
+        userIdRef.current = id;
         setUserId(id);
         setIsConnected(true);
         setIsLoading(false);
