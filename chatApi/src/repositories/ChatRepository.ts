@@ -4,15 +4,17 @@ import { IMessage, IPrivateChatRoom } from '../models/Interfaces';
  * Repository abstraction for chat rooms and messages.
  * Encapsulates all private-chat persistence — swap to MongoDB
  * by implementing a new class with the same interface.
+ *
+ * Methods return Promise to support async DB implementations.
  */
 export interface IChatRepository {
-  getRoom(roomId: string): IPrivateChatRoom | undefined;
-  createRoom(room: IPrivateChatRoom): void;
-  hasRoom(roomId: string): boolean;
-  isParticipant(roomId: string, userId: string): boolean;
-  addMessage(roomId: string, message: IMessage): void;
-  getMessages(roomId: string, startIndex: number, endIndex: number): IMessage[];
-  getMessageCount(roomId: string): number;
+  getRoom(roomId: string): IPrivateChatRoom | undefined | Promise<IPrivateChatRoom | undefined>;
+  createRoom(room: IPrivateChatRoom): void | Promise<void>;
+  hasRoom(roomId: string): boolean | Promise<boolean>;
+  isParticipant(roomId: string, userId: string): boolean | Promise<boolean>;
+  addMessage(roomId: string, message: IMessage): void | Promise<void>;
+  getMessages(roomId: string, startIndex: number, endIndex: number): IMessage[] | Promise<IMessage[]>;
+  getMessageCount(roomId: string): number | Promise<number>;
 }
 
 export class InMemoryChatRepository implements IChatRepository {

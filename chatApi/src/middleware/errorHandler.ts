@@ -43,13 +43,19 @@ export const errorHandler = (
 /**
  * Wraps Socket.IO event handlers with try/catch to prevent
  * unhandled exceptions from crashing the server.
+ * Supports both sync and async handlers.
  */
 export const wrapSocketHandler = <T extends unknown[]>(
-  handler: (...args: T) => void
+  handler: (...args: T) => void | Promise<void>
 ) => {
   return (...args: T): void => {
     try {
-      handler(...args);
+      const result = handler(...args);
+      if (result instanceof Promise) {
+        result.catch((error) => {
+          console.error('[SocketError:async]', error);
+        });
+      }
     } catch (error) {
       console.error('[SocketError]', error);
     }

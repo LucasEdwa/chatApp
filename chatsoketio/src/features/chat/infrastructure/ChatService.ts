@@ -25,19 +25,41 @@ export class ChatService {
   private messageAckCallbacks: ((data: { status: string; clientMessageId?: string }) => void)[] = [];
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private reconnectCallbacks: (() => void)[] = [];
+  private publicHistoryCallbacks: ((messages: IMessage[]) => void)[] = [];
+  private unreadCountsCallbacks: ((counts: Record<string, number>) => void)[] = [];
+  private unreadUpdatedCallbacks: ((data: { roomId: string; count: number }) => void)[] = [];
+  private token: string | null = null;
 
   connect(userName: string): Promise<string> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       try {
+        // Fetch JWT token from the API
+        try {
+          const res = await fetch(`${import.meta.env.VITE_CHAT_API_URL}/auth/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            this.token = data.token;
+          }
+        } catch {
+          // Token fetch failed — fall back to username-only auth
+        }
+
         this.socket = io(import.meta.env.VITE_CHAT_API_URL, {
           transports: ['websocket'],
           secure: true,
-          // ── Reconnection & Heartbeat ──────────────────────
-          reconnection: true,              // Auto-reconnect on signal drop
-          reconnectionAttempts: 10,        // Try up to 10 times
-          reconnectionDelay: 1000,         // Start with 1s delay
-          reconnectionDelayMax: 10000,     // Cap at 10s between attempts
-          timeout: 20000,                  // 20s connection timeout
+          auth: {
+            userName,
+            ...(this.token ? { token: this.token } : {}),
+          },
+          reconnection: true,
+          reconnectionAttempts: 10,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 10000,
+          timeout: 20000,
           extraHeaders: {
             'ngrok-skip-browser-warning': 'true'
           }
@@ -107,6 +129,27 @@ export class ChatService {
         this.socket.on(SocketEvents.USER_STOPPED_TYPING, (raw: unknown) => {
           const parsed = stoppedTypingSchema.safeParse(raw);
           if (parsed.success) this.handleUserStoppedTyping(parsed.data);
+        });
+
+        // ── Persistence events ────────────────────────────────
+        this.socket.on('public-history', (raw: unknown) => {
+          if (Array.isArray(raw)) {
+            const messages = raw
+              .map((m) => messageSchema.safeParse(m))
+              .filter((r) => r.success)
+              .map((r) => ({ ...(r as { success: true; data: IMessage }).data, timestamp: new Date((r as { success: true; data: IMessage }).data.timestamp) }));
+            this.publicHistoryCallbacks.forEach((cb) => cb(messages));
+          }
+        });
+        this.socket.on('unread-counts', (raw: unknown) => {
+          if (raw && typeof raw === 'object') {
+            this.unreadCountsCallbacks.forEach((cb) => cb(raw as Record<string, number>));
+          }
+        });
+        this.socket.on('unread-updated', (raw: unknown) => {
+          if (raw && typeof raw === 'object' && 'roomId' in raw && 'count' in raw) {
+            this.unreadUpdatedCallbacks.forEach((cb) => cb(raw as { roomId: string; count: number }));
+          }
         });
 
         this.socket.emit(SocketEvents.USER_CONNECTED, userName);
@@ -233,6 +276,36 @@ export class ChatService {
 
   onReconnect(callback: () => void): void {
     this.reconnectCallbacks.push(callback);
+  }
+
+  onPublicHistory(callback: (messages: IMessage[]) => void): void {
+    this.publicHistoryCallbacks.push(callback);
+  }
+
+  onUnreadCounts(callback: (counts: Record<string, number>) => void): void {
+    this.unreadCountsCallbacks.push(callback);
+  }
+
+  onUnreadUpdated(callback: (data: { roomId: string; count: number }) => void): void {
+    this.unreadUpdatedCallbacks.push(callback);
+  }
+
+  markRead(roomId: string): void {
+    if (this.socket) {
+      this.socket.emit('mark-read', roomId);
+    }
+  }
+
+  requestPublicHistory(limit?: number): void {
+    if (this.socket) {
+      this.socket.emit('get-public-history', limit);
+    }
+  }
+
+  requestUnreadCounts(): void {
+    if (this.socket) {
+      this.socket.emit('get-unread-counts');
+    }
   }
 
   requestUsersList(): void {

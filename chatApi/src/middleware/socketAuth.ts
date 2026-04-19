@@ -1,29 +1,46 @@
 import { Socket } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import { sanitizeUserName } from './sanitize';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+const JWT_EXPIRES_IN = '24h';
+
+export interface JwtPayload {
+  sub: string; // userName
+  iat: number;
+  exp: number;
+}
+
+export const generateToken = (userName: string): string => {
+  return jwt.sign({ sub: userName }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+};
+
+export const verifyToken = (token: string): JwtPayload | null => {
+  try {
+    return jwt.verify(token, JWT_SECRET) as JwtPayload;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Socket.IO middleware that validates the connection handshake.
- * Rejects connections that don't provide valid auth credentials.
- *
- * Currently validates the username from handshake auth.
- * When JWT is added, this is where token verification goes —
- * invalid tokens never get a socket connection.
+ * Verifies JWT token if provided; falls back to username validation.
  */
 export const socketAuthMiddleware = (socket: Socket, next: (err?: Error) => void) => {
   const { userName, token } = socket.handshake.auth;
 
-  // ── JWT placeholder ──────────────────────────────────────
-  // When auth is implemented, verify the token here:
-  //
-  // try {
-  //   const decoded = jwt.verify(token, process.env.JWT_SECRET!);
-  //   socket.data.userId = decoded.sub;
-  //   socket.data.userName = decoded.name;
-  // } catch {
-  //   return next(new Error('Authentication failed'));
-  // }
+  // ── JWT verification ─────────────────────────────────────
+  if (token) {
+    const decoded = verifyToken(token);
+    if (!decoded) {
+      return next(new Error('Authentication failed: invalid token'));
+    }
+    socket.data.userName = decoded.sub;
+    return next();
+  }
 
-  // ── Username validation (current auth model) ─────────────
+  // ── Username validation (fallback) ───────────────────────
   if (userName) {
     const clean = sanitizeUserName(userName);
     if (!clean) {

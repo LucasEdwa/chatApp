@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+
+  chat-api:
+    build: ./chatApi
+    ports:
+      - '8080:8080'
+    environment:
+      - PORT=8080
+      - MONGO_URI=mongodb://mongodb:27017/chatapp
+      - JWT_SECRET=dev-secret-change-in-production
+      - CORS_ORIGIN=http://localhost:5173
+    depends_on:
+      - mongodb
+
+  chat-frontend:
+    build: ./chatsoketio
+    ports:
+      - '5173:8080'
+
+volumes:
+  mongo-data:

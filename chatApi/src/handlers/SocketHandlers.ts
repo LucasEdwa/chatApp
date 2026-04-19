@@ -1,7 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { IMessage, IUser, ITypingUser } from '../models/Interfaces';
-import { users, privateChatRooms, typingUsers } from '../state/ChatState';
-import { getCurrentUsersList, getOrCreatePrivateChatRoom } from '../utils/ChatUtils';
+import { users, typingUsers } from '../state/ChatState';
+import { getCurrentUsersList } from '../utils/ChatUtils';
 import { handleTypingStop } from '../utils/TypingUtils';
 import { wrapSocketHandler } from '../middleware/errorHandler';
 import { sanitizeMessage, sanitizeUserName } from '../middleware/sanitize';
@@ -15,21 +15,21 @@ import {
   typingPayload,
   userConnectedPayload,
 } from '../schemas/socketSchemas';
+import { MongoChatRepository } from '../repositories/MongoChatRepository';
+import { UnreadRepository } from '../repositories/UnreadRepository';
 
 const DEFAULT_PAGE_SIZE = 50;
-const rateLimiter = new SocketRateLimiter(30, 5000); // 30 events per 5s per socket
+const rateLimiter = new SocketRateLimiter(30, 5000);
+const chatRepo = new MongoChatRepository();
+const unreadRepo = new UnreadRepository();
 
 export const setupSocketHandlers = (io: Server, socket: Socket) => {
   // Send current users list to the newly connected client
   const currentUsersList = getCurrentUsersList();
   socket.emit(SocketEvents.USERS_LIST, currentUsersList);
 
-  // ── Message with Acknowledgment ────────────────────────────
-  // The client passes a callback as the last argument of emit().
-  // We call it with { status: 'ok', ... } or { status: 'error', ... }
-  // so the client knows for sure the server processed the message.
-  socket.on(SocketEvents.SEND_MESSAGE, wrapSocketHandler((raw: unknown, ack?: (response: { status: string; clientMessageId?: string }) => void) => {
-    // Validate payload structure with Zod
+  // ── Message with Acknowledgment + DB Persistence ───────────
+  socket.on(SocketEvents.SEND_MESSAGE, wrapSocketHandler(async (raw: unknown, ack?: (response: { status: string; clientMessageId?: string }) => void) => {
     const parsed = sendMessagePayload.safeParse(raw);
     if (!parsed.success) {
       if (ack) ack({ status: 'error' });
@@ -37,13 +37,11 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
     }
     const msg = parsed.data;
 
-    // Per-socket rate limiting
     if (!rateLimiter.consume(socket.id)) {
       if (ack) ack({ status: 'error', clientMessageId: msg.clientMessageId });
       return;
     }
 
-    // Sanitize message content to prevent XSS
     const cleanMessage = sanitizeMessage(msg.message);
     if (!cleanMessage) {
       if (ack) ack({ status: 'error', clientMessageId: msg.clientMessageId });
@@ -58,23 +56,50 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
     };
 
     if (sanitizedMsg.isPrivate && sanitizedMsg.roomId) {
-      const room = privateChatRooms.get(sanitizedMsg.roomId);
+      // Persist private message to MongoDB
+      await chatRepo.addMessage(sanitizedMsg.roomId, sanitizedMsg);
+
+      // Increment unread for all room participants except sender
+      const room = await chatRepo.getRoom(sanitizedMsg.roomId);
       if (room) {
-        room.messages.push(sanitizedMsg);
-        room.participants.forEach(participantId => {
-          io.to(participantId).emit(SocketEvents.PRIVATE_MESSAGE, sanitizedMsg);
-        });
+        const senderUser = users.get(socket.id);
+        for (const participantName of room.participants) {
+          if (senderUser && participantName !== senderUser.name) {
+            const newCount = await unreadRepo.increment(participantName, sanitizedMsg.roomId);
+            for (const [sid, u] of users.entries()) {
+              if (u.name === participantName) {
+                io.to(sid).emit('unread-updated', { roomId: sanitizedMsg.roomId, count: newCount });
+              }
+            }
+          }
+        }
+        for (const [socketId, user] of users.entries()) {
+          if (room.participants.includes(user.name)) {
+            io.to(socketId).emit(SocketEvents.PRIVATE_MESSAGE, sanitizedMsg);
+          }
+        }
       }
     } else {
+      // Persist public message to MongoDB
+      await chatRepo.addPublicMessage(sanitizedMsg);
+
+      // Increment unread for all other connected users
+      const senderUser = users.get(socket.id);
+      for (const [sid, user] of users.entries()) {
+        if (senderUser && user.name !== senderUser.name) {
+          const newCount = await unreadRepo.increment(user.name, 'public');
+          io.to(sid).emit('unread-updated', { roomId: 'public', count: newCount });
+        }
+      }
+
       io.emit(SocketEvents.CHAT_MESSAGE, sanitizedMsg);
     }
 
-    // Acknowledge delivery to the sender
     if (ack) ack({ status: 'ok', clientMessageId: msg.clientMessageId });
   }));
 
-  // Handle starting a private chat
-  socket.on(SocketEvents.START_PRIVATE_CHAT, wrapSocketHandler((raw: unknown) => {
+  // ── Private Chat with DB Persistence ───────────────────────
+  socket.on(SocketEvents.START_PRIVATE_CHAT, wrapSocketHandler(async (raw: unknown) => {
     const parsed = startPrivateChatPayload.safeParse(raw);
     if (!parsed.success) {
       socket.emit(SocketEvents.ERROR, 'Invalid target user ID');
@@ -84,27 +109,46 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
 
     const currentUser = users.get(socket.id);
     const targetUser = users.get(targetUserId);
-    
+
     if (!currentUser || !targetUser) {
       socket.emit(SocketEvents.ERROR, 'User not found');
       return;
     }
-    
-    const room = getOrCreatePrivateChatRoom(socket.id, targetUserId);
-    
-    socket.join(room.id);
-    io.to(targetUserId).emit(SocketEvents.JOIN_PRIVATE_ROOM, room.id);
-    
+
+    // Deterministic room ID from sorted userNames (persists across sessions)
+    const roomId = [currentUser.name, targetUser.name].sort().join('-');
+
+    const existingRoom = await chatRepo.getRoom(roomId);
+    if (!existingRoom) {
+      await chatRepo.createRoom({
+        id: roomId,
+        participants: [currentUser.name, targetUser.name],
+        messages: [],
+        createdAt: new Date(),
+      });
+    }
+
+    // Load last N messages from DB
+    const messageCount = await chatRepo.getMessageCount(roomId);
+    const startIdx = Math.max(0, messageCount - DEFAULT_PAGE_SIZE);
+    const recentMessages = await chatRepo.getMessages(roomId, startIdx, messageCount);
+
+    socket.join(roomId);
+    io.to(targetUserId).emit(SocketEvents.JOIN_PRIVATE_ROOM, roomId);
+
+    // Mark as read for the initiator
+    await unreadRepo.markRead(currentUser.name, roomId);
+
     socket.emit(SocketEvents.PRIVATE_CHAT_STARTED, {
-      roomId: room.id,
+      roomId,
       participant: targetUser,
-      messages: room.messages.slice(-DEFAULT_PAGE_SIZE),
+      messages: recentMessages,
     });
-    
+
     io.to(targetUserId).emit(SocketEvents.PRIVATE_CHAT_INVITATION, {
-      roomId: room.id,
+      roomId,
       participant: currentUser,
-      messages: room.messages.slice(-DEFAULT_PAGE_SIZE),
+      messages: recentMessages,
     });
   }));
 
@@ -115,25 +159,53 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
     socket.join(parsed.data);
   }));
 
-  // Handle getting private chat history with cursor-based pagination
-  socket.on(SocketEvents.GET_PRIVATE_HISTORY, wrapSocketHandler((raw: unknown) => {
+  // ── Paginated History from MongoDB ─────────────────────────
+  socket.on(SocketEvents.GET_PRIVATE_HISTORY, wrapSocketHandler(async (raw: unknown) => {
     const parsed = getPrivateHistoryPayload.safeParse(raw);
     if (!parsed.success) return;
     const data = parsed.data;
 
-    const room = privateChatRooms.get(data.roomId);
-    if (!room || !room.participants.includes(socket.id)) return;
-
+    const totalCount = await chatRepo.getMessageCount(data.roomId);
     const limit = Math.min(data.limit || DEFAULT_PAGE_SIZE, 100);
-    const endIndex = data.beforeIndex ?? room.messages.length;
+    const endIndex = data.beforeIndex ?? totalCount;
     const startIndex = Math.max(0, endIndex - limit);
+
+    const messages = await chatRepo.getMessages(data.roomId, startIndex, endIndex);
 
     socket.emit(SocketEvents.PRIVATE_CHAT_HISTORY, {
       roomId: data.roomId,
-      messages: room.messages.slice(startIndex, endIndex),
+      messages,
       hasMore: startIndex > 0,
       nextCursor: startIndex > 0 ? startIndex : null,
     });
+  }));
+
+  // ── Mark as Read (server-side source of truth) ─────────────
+  socket.on('mark-read', wrapSocketHandler(async (raw: unknown) => {
+    const roomId = typeof raw === 'string' ? raw : null;
+    if (!roomId) return;
+
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    await unreadRepo.markRead(user.name, roomId);
+    socket.emit('unread-updated', { roomId, count: 0 });
+  }));
+
+  // ── Get Unread Counts (on connect / reconnect) ─────────────
+  socket.on('get-unread-counts', wrapSocketHandler(async () => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const counts = await unreadRepo.getUnreadCounts(user.name);
+    socket.emit('unread-counts', Object.fromEntries(counts));
+  }));
+
+  // ── Get Public Chat History ────────────────────────────────
+  socket.on('get-public-history', wrapSocketHandler(async (raw: unknown) => {
+    const limit = typeof raw === 'number' ? Math.min(raw, 100) : DEFAULT_PAGE_SIZE;
+    const messages = await chatRepo.getPublicMessages(limit);
+    socket.emit('public-history', messages);
   }));
 
   // Handle typing events
@@ -191,7 +263,8 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
     }
   }));
 
-  socket.on(SocketEvents.USER_CONNECTED, wrapSocketHandler((raw: unknown) => {
+  // ── User Connected: Load persisted state from DB ───────────
+  socket.on(SocketEvents.USER_CONNECTED, wrapSocketHandler(async (raw: unknown) => {
     const parsed = userConnectedPayload.safeParse(raw);
     if (!parsed.success) {
       socket.emit(SocketEvents.ERROR, 'Invalid username. Must be 2–20 characters.');
@@ -224,6 +297,13 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
     
     const usersList = getCurrentUsersList();
     io.emit(SocketEvents.USERS_LIST, usersList);
+
+    // ── Hydrate client with persisted data ─────────────────
+    const unreadCounts = await unreadRepo.getUnreadCounts(cleanName);
+    socket.emit('unread-counts', Object.fromEntries(unreadCounts));
+
+    const publicHistory = await chatRepo.getPublicMessages(DEFAULT_PAGE_SIZE);
+    socket.emit('public-history', publicHistory);
   }));
 
   socket.on('disconnect', () => {

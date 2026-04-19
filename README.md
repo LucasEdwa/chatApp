@@ -11,34 +11,49 @@ A full-stack real-time chat application built with **TypeScript** end-to-end, fe
 | Layer | Technologies |
 |-------|-------------|
 | **Frontend** | React 19, TypeScript, Vite, Socket.IO Client, Tailwind CSS 4 |
-| **Backend** | Node.js 20, Express, Socket.IO, TypeScript |
-| **Deployment** | Docker (multi-stage build), Google Cloud Run |
-| **Architecture** | Clean Architecture (frontend), Handler-based (backend) |
+| **Backend** | Node.js 20, Express, Socket.IO, TypeScript, Mongoose, JWT |
+| **Database** | MongoDB 7 (message persistence, unread tracking) |
+| **Auth** | JWT (jsonwebtoken) — token-based socket authentication |
+| **Validation** | Zod (runtime schema validation on both client and server) |
+| **Deployment** | Docker (multi-stage build), Google Cloud Run, GitHub Actions CI/CD |
+| **Architecture** | Clean Architecture (frontend), Repository + Handler pattern (backend) |
 
 ---
 
 ## Backend (`chatApi/`)
 
-An **Express + Socket.IO** server that manages all real-time communication. There is no database — all state is held **in-memory** using `Map` structures, making it session-based.
+An **Express + Socket.IO** server with **MongoDB persistence** and **JWT authentication**. Messages and chat rooms survive server restarts; unread counts are tracked server-side as the source of truth.
 
 **Core responsibilities:**
 
 - **User management** — Tracks connected users via socket IDs. On disconnect, cleans up state and notifies all clients.
-- **Public chat** — Broadcasts messages to all connected clients. System messages announce when users join or leave.
-- **Private chat** — Generates **deterministic room IDs** by sorting user IDs alphabetically (so `userA-userB` always equals `userB-userA`), preventing duplicate rooms. Message history persists in memory for the session.
+- **Public chat** — Broadcasts messages to all connected clients. Messages are persisted to MongoDB. On reconnect, the client receives the last 50 messages from the database.
+- **Private chat** — Generates **deterministic room IDs** by sorting **usernames** alphabetically (so `alice-bob` always equals `bob-alice`), ensuring rooms persist across sessions regardless of socket ID changes.
+- **Message persistence** — All messages (public and private) are saved to MongoDB. Chat rooms and their participant lists are also persisted.
+- **Unread tracking** — Server-side unread counts using atomic `$inc` operations in MongoDB. Counts survive page refreshes and server restarts. Pushed to clients in real-time via `unread-updated` events.
 - **Typing indicators** — Tracks who is typing with a **3-second auto-timeout** to prevent stale indicators if a client disconnects unexpectedly.
+- **JWT authentication** — `/auth/token` endpoint issues JWT tokens. Socket connections are authenticated at the handshake phase before a socket is ever opened.
 
 **Architecture:**
 
 ```
-handlers/SocketHandlers.ts  →  Event routing (all socket events + ack callbacks)
-state/ChatState.ts          →  In-memory Maps (users, rooms, typing)
-utils/ChatUtils.ts          →  Room creation, user list helpers
+handlers/SocketHandlers.ts  →  Event routing (all socket events + ack callbacks, async DB ops)
+config/database.ts          →  MongoDB connection manager
+models/MessageModel.ts      →  Mongoose schema for messages (indexed by roomId + timestamp)
+models/ChatRoomModel.ts     →  Mongoose schema for chat rooms (indexed by participants)
+models/UnreadModel.ts       →  Mongoose schema for server-side unread counts
+repositories/MongoChatRepository.ts  →  MongoDB implementation of IChatRepository
+repositories/UnreadRepository.ts     →  Atomic unread count operations ($inc, markRead)
+repositories/ChatRepository.ts       →  IChatRepository interface (async-compatible)
+state/ChatState.ts          →  In-memory Maps (online users, typing state)
+utils/ChatUtils.ts          →  User list helpers
 utils/TypingUtils.ts        →  Typing cleanup logic
 models/Interfaces.ts        →  Shared type definitions
-middleware/errorHandler.ts  →  Centralized error handling (Express + Socket.IO)
+schemas/socketSchemas.ts    →  Zod schemas for all socket payloads
+shared/SocketEvents.ts      →  Type-safe event name constants
+middleware/errorHandler.ts  →  Centralized error handling (Express + Socket.IO, sync + async)
 middleware/sanitize.ts      →  XSS sanitization (messages + usernames)
-middleware/socketAuth.ts    →  Handshake auth + per-socket rate limiter
+middleware/socketAuth.ts    →  JWT auth + handshake validation + per-socket rate limiter
 ```
 
 **Deployment:** Multi-stage Docker build (compile TS → minimal Node Alpine production image). Deployed to **GCP Cloud Run** (europe-north1) with auto-scaling 0–10 instances.
@@ -105,7 +120,7 @@ The backend implements several layers of defense following OWASP best practices:
 Instead of scattered `try/catch` blocks, the backend uses:
 
 - **`errorHandler` middleware** — A single Express error handler that catches all route errors and returns consistent JSON responses. Operational errors (`AppError`) return meaningful status codes; unexpected errors return `500` without leaking internals.
-- **`wrapSocketHandler`** — A higher-order function that wraps every Socket.IO event handler with error boundary logic, preventing one bad event from crashing the process.
+- **`wrapSocketHandler`** — A higher-order function that wraps every Socket.IO event handler with error boundary logic (supports both sync and async handlers), preventing one bad event from crashing the process.
 
 ```
 src/middleware/
@@ -126,9 +141,9 @@ Beyond HTTP rate limiting, a **per-socket event throttler** (`SocketRateLimiter`
 
 Connections are validated at the **handshake phase** before a socket is ever opened:
 
-- Username is sanitized during the initial connection
-- Invalid handshakes are rejected with `next(new Error(...))`  — the socket never connects
-- **JWT-ready**: the middleware includes a placeholder for token verification. When auth is added, unauthenticated users are blocked at the transport layer, not the application layer
+- **JWT verification** — If a token is provided in `socket.handshake.auth`, it is verified using `jsonwebtoken`. Invalid or expired tokens are rejected with `next(new Error('Authentication failed'))` — the socket never connects
+- **Fallback to username validation** — If no token is provided, the username is sanitized and used as identity
+- Token issuance via `POST /auth/token` — the frontend fetches a JWT before connecting the socket
 
 ---
 
@@ -203,13 +218,16 @@ Response: {
 
 | Decision | Rationale |
 |----------|-----------|
-| **No database** | Keeps the project lightweight and focused on real-time communication patterns. Data is session-scoped. |
-| **No auth** | Socket ID serves as user identity. Simplifies the scope while demonstrating WebSocket concepts. |
-| **Deterministic room IDs** | Sorting participant IDs prevents duplicate private rooms regardless of who initiates. |
+| **MongoDB** | Persists messages, rooms, and unread counts across server restarts. Mongoose provides schema validation and indexed queries. |
+| **JWT authentication** | Stateless token-based auth verified at the socket handshake phase. Graceful fallback to username-only auth for simplicity. |
+| **Zod validation** | Runtime schema validation on both client and server prevents malformed payloads from corrupting state. |
+| **Server-side unread counts** | Atomic `$inc` operations prevent race conditions. Counts survive page refresh and are pushed in real-time. |
+| **Deterministic room IDs by username** | Sorting participant **names** (not socket IDs) ensures rooms persist across sessions and reconnections. |
 | **Typing auto-timeout (3s)** | Handles edge cases where clients disconnect without sending `typing-stop`. |
 | **Singleton services** | `ChatService` and `NotificationService` are instantiated once and shared, avoiding multiple socket connections. |
 | **CSS variables for theming** | Avoids re-rendering the entire component tree on theme change — just updates CSS custom properties. |
 | **Clean Architecture on frontend** | Clear separation of concerns: UI components never talk to Socket.IO directly, only through hooks that use services. |
+| **GitHub Actions CI/CD** | Automated type-checking, linting, and deployment on push to `main`. Secrets for MongoDB URI and JWT are stored in GitHub Actions. |
 
 ---
 
@@ -218,19 +236,28 @@ Response: {
 ```
 Client                              Server
   │                                    │
-  │── [handshake + auth middleware] ──►│  ← Rejects invalid connections
+  │── POST /auth/token ───────────────►│  ← Returns JWT
+  │◄──────────────── { token } ────────┤
+  │                                    │
+  │── [handshake + JWT verification]──►│  ← Rejects invalid tokens
   │                                    │
   ├── user-connected ─────────────────►│
   │◄──────────────────── users-list ───┤
   │◄──────────────────── user-joined ──┤
+  │◄──────────── unread-counts ────────┤  ← Persisted from MongoDB
+  │◄──────────── public-history ───────┤  ← Last 50 messages from DB
   │                                    │
   ├── send-chat-message ──────────────►│  ← Rate-limited (30/5s)
   │◄──────────── ack({ status: 'ok' }) │  ← Acknowledgment callback
   │◄──────────────────── chat-message ─┤
+  │◄──────────── unread-updated ───────┤  ← Pushed to other users
   │                                    │
   ├── start-private-chat ─────────────►│
-  │◄────────── private-chat-started ───┤
+  │◄────────── private-chat-started ───┤  ← Messages from MongoDB
   │◄────────── private-chat-invitation─┤  (to other user)
+  │                                    │
+  ├── mark-read ──────────────────────►│  ← Resets unread in MongoDB
+  │◄──────────── unread-updated(0) ────┤
   │                                    │
   ├── typing-start ───────────────────►│  ← Rate-limited
   │◄──────────────────── user-typing ──┤
@@ -245,31 +272,67 @@ Client                              Server
 
 ## Getting Started
 
-### Backend
+### Prerequisites
 
+- Node.js 20+
+- MongoDB 7+ (local or cloud)
+
+### Quick Start with Docker Compose
+
+```bash
+docker compose up
+```
+
+This starts MongoDB, the backend (port 8080), and the frontend (port 5173).
+
+### Manual Setup
+
+**Backend:**
 ```bash
 cd chatApi
 npm install
+# Set environment variables (or use defaults)
+export MONGO_URI=mongodb://localhost:27017/chatapp
+export JWT_SECRET=your-secret-here
 npm run dev
 ```
 
-### Frontend
-
+**Frontend:**
 ```bash
 cd chatsoketio
 npm install
+# Set the backend URL
+echo "VITE_CHAT_API_URL=http://localhost:8080" > .env
 npm run dev
 ```
 
-Set `VITE_CHAT_API_URL` in the frontend `.env` to point to the backend URL.
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MONGO_URI` | `mongodb://localhost:27017/chatapp` | MongoDB connection string |
+| `JWT_SECRET` | `dev-secret-change-in-production` | Secret for signing JWT tokens |
+| `PORT` | `8080` | Backend server port |
+| `CORS_ORIGIN` | `http://localhost:5173` | Comma-separated allowed origins |
+| `VITE_CHAT_API_URL` | — | Backend URL for the frontend |
+
+---
+
+## CI/CD
+
+The project uses **GitHub Actions** (`.github/workflows/ci.yml`) for automated CI/CD:
+
+1. **On every push/PR to `main`**: TypeScript type-checking + build for both projects
+2. **On merge to `main`**: Automated deployment to GCP Cloud Run with secret injection (`MONGO_URI`, `JWT_SECRET`)
+
+Required GitHub Secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `MONGO_URI`, `JWT_SECRET`
 
 ---
 
 ## Future Improvements
 
-- Add a **persistence layer** (Redis or a database) so messages survive server restarts
-- Implement **JWT authentication** with HTTP-only cookies (socket auth middleware is already JWT-ready)
-- Add **message read receipts** (double checkmark)
-- Migrate to **cursor-based pagination with database** (current in-memory pagination is index-based)
 - Add **Redis adapter** for horizontal scaling across multiple server instances
+- Add **message read receipts** (double checkmark)
 - Write **unit and integration tests**
+- Add **file/image sharing** support
+- Implement **user authentication with OAuth providers**

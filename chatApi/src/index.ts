@@ -6,7 +6,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { setupSocketHandlers } from './handlers/SocketHandlers';
 import { errorHandler, AppError } from './middleware/errorHandler';
-import { socketAuthMiddleware } from './middleware/socketAuth';
+import { socketAuthMiddleware, generateToken } from './middleware/socketAuth';
+import { connectDatabase } from './config/database';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -67,6 +68,17 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// ── JWT Auth Endpoint ────────────────────────────────────────
+app.post('/auth/token', (req, res) => {
+  const { userName } = req.body;
+  if (!userName || typeof userName !== 'string' || userName.trim().length < 2 || userName.trim().length > 20) {
+    res.status(400).json({ status: 'error', message: 'Invalid username. Must be 2–20 characters.' });
+    return;
+  }
+  const token = generateToken(userName.trim());
+  res.json({ token });
+});
+
 // 404 handler for undefined routes
 app.all('*', (req, _res, next) => {
   next(new AppError(`Route ${req.originalUrl} not found`, 404));
@@ -95,9 +107,13 @@ const shutdown = () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🔒 CORS allowed origins: ${allowedOrigins.join(', ')}`);
-  console.log(`💓 Heartbeat: ping every 25s, timeout 20s`);
-  console.log(`🔄 Connection recovery: 30s window`);
+// ── Start Server with MongoDB ────────────────────────────────
+connectDatabase().then(() => {
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🔒 CORS allowed origins: ${allowedOrigins.join(', ')}`);
+    console.log(`💓 Heartbeat: ping every 25s, timeout 20s`);
+    console.log(`🔄 Connection recovery: 30s window`);
+    console.log(`📦 MongoDB connected`);
+  });
 });

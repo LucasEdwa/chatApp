@@ -1,5 +1,5 @@
 import React from 'react';
-import { IMessage, MessageStatus } from '../domain/Interfaces';
+import { IMessage } from '../domain/Interfaces';
 import { SystemMessage } from './ChatMessage/SystemMessage';
 import { UserMessage } from './ChatMessage/UserMessage';
 
