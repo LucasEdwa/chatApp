@@ -30,12 +30,17 @@ export const setupSocketHandlers = (io: Server, socket: Socket) => {
 
   // ── Message with Acknowledgment + DB Persistence ───────────
   socket.on(SocketEvents.SEND_MESSAGE, wrapSocketHandler(async (raw: unknown, ack?: (response: { status: string; clientMessageId?: string }) => void) => {
+
+    // Debug log: print incoming message and clientMessageId
+    console.log('[Socket] SEND_MESSAGE raw:', raw);
     const parsed = sendMessagePayload.safeParse(raw);
     if (!parsed.success) {
       if (ack) ack({ status: 'error' });
       return;
     }
     const msg = parsed.data;
+    console.log('[Socket] Parsed message:', msg);
+    console.log('[Socket] clientMessageId:', msg.clientMessageId);
 
     if (!rateLimiter.consume(socket.id)) {
       if (ack) ack({ status: 'error', clientMessageId: msg.clientMessageId });
