@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MessageAvatar } from './MessageAvatar';
 import { MessageBubble } from './MessageBubble';
 import { MessageTimestamp } from './MessageTimestamp';
+import { MessageStatus } from '../../domain/Interfaces';
 
 interface UserMessageProps {
   message: string;
@@ -9,6 +10,7 @@ interface UserMessageProps {
   timestamp: Date;
   isOwnMessage: boolean;
   showRelativeTime?: boolean;
+  status?: MessageStatus;
 }
 
 export const UserMessage: React.FC<UserMessageProps> = ({
@@ -16,7 +18,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   userName,
   timestamp,
   isOwnMessage,
-  showRelativeTime = false
+  showRelativeTime = false,
+  status
 }) => {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -40,7 +43,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         <MessageBubble 
           message={message}
           isOwnMessage={isOwnMessage}
-          className={isHovered ? 'scale-[1.02]' : ''}
+          className={`${isHovered ? 'scale-[1.02]' : ''} ${status === 'sending' ? 'opacity-70' : ''} ${status === 'failed' ? 'opacity-50' : ''}`}
         />
         
         <MessageTimestamp
@@ -48,6 +51,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           userName={!isOwnMessage ? userName : undefined}
           isOwnMessage={isOwnMessage}
           showRelativeTime={showRelativeTime}
+          status={status}
           className={`${isHovered || isOwnMessage ? 'opacity-100' : 'opacity-0'} transition-opacity duration-200`}
         />
       </div>

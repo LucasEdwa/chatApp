@@ -29,6 +29,9 @@ export const useMultiChat = (userName: string) => {
 
       const handleMessage = (message: IMessage) => {
         if (!message.isPrivate) {
+          // Skip server echo for own messages — already added optimistically
+          if (message.clientMessageId && message.userId === userId) return;
+
           setPublicMessages(prev => [...prev, message]);
           
           // Add unread count if not in public chat and message is not from current user
@@ -56,6 +59,9 @@ export const useMultiChat = (userName: string) => {
 
       const handlePrivateMessage = (message: IMessage) => {
         if (message.roomId) {
+          // Skip server echo for own messages — already added optimistically
+          if (message.clientMessageId && message.userId === userId) return;
+
           setPrivateChats(prev => {
             const newChats = new Map(prev);
             const existingMessages = newChats.get(message.roomId!) || [];
@@ -180,6 +186,39 @@ export const useMultiChat = (userName: string) => {
       chatService.onUserTyping(handleUserTyping);
       chatService.onUserStoppedTyping(handleUserStoppedTyping);
 
+      // ── Acknowledgment handler (Optimistic UI) ─────────────
+      // When the server confirms a message, upgrade its status
+      // from "sending" to "sent" (or "failed").
+      chatService.onMessageAck((ackData) => {
+        const { status, clientMessageId } = ackData;
+        if (!clientMessageId) return;
+
+        const newStatus = status === 'ok' ? 'sent' as const : 'failed' as const;
+
+        // Update in public messages
+        setPublicMessages(prev =>
+          prev.map(m =>
+            m.clientMessageId === clientMessageId ? { ...m, status: newStatus } : m
+          )
+        );
+
+        // Update in private chats
+        setPrivateChats(prev => {
+          const newChats = new Map(prev);
+          let changed = false;
+          for (const [roomId, msgs] of newChats) {
+            const updated = msgs.map(m =>
+              m.clientMessageId === clientMessageId ? { ...m, status: newStatus } : m
+            );
+            if (updated !== msgs) {
+              newChats.set(roomId, updated);
+              changed = true;
+            }
+          }
+          return changed ? newChats : prev;
+        });
+      });
+
       chatService.connect(userName).catch(() => {
         setIsLoading(false);
         setIsConnected(false);
@@ -194,14 +233,33 @@ export const useMultiChat = (userName: string) => {
   const sendMessage = useCallback((messageText: string) => {
     if (!chatService.isConnected() || !messageText.trim() || !userId) return;
 
+    // Generate a client-side ID for ack tracking
+    const clientMessageId = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     const message: IMessage = {
       message: messageText.trim(),
       timestamp: new Date(),
       userName: userName,
       userId: userId,
       roomId: activeChat.isPrivate ? activeChat.id : undefined,
-      isPrivate: activeChat.isPrivate
+      isPrivate: activeChat.isPrivate,
+      clientMessageId,
+      status: 'sending', // Optimistic: show immediately as "sending"
     };
+
+    // ── Optimistic insertion ──────────────────────────────────
+    // The message appears in the UI right away. The ack callback
+    // will upgrade status to "sent" or "failed".
+    if (activeChat.isPrivate && activeChat.id) {
+      setPrivateChats(prev => {
+        const newChats = new Map(prev);
+        const existing = newChats.get(activeChat.id) || [];
+        newChats.set(activeChat.id, [...existing, message]);
+        return newChats;
+      });
+    } else {
+      setPublicMessages(prev => [...prev, message]);
+    }
 
     chatService.sendMessage(message);
   }, [activeChat, userId, userName]);

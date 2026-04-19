@@ -1,5 +1,5 @@
 import React from 'react';
-import { IMessage } from '../domain/Interfaces';
+import { IMessage, MessageStatus } from '../domain/Interfaces';
 import { SystemMessage } from './ChatMessage/SystemMessage';
 import { UserMessage } from './ChatMessage/UserMessage';
 
@@ -32,6 +32,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       timestamp={message.timestamp}
       isOwnMessage={isOwnMessage}
       showRelativeTime={showRelativeTime}
+      status={isOwnMessage ? message.status : undefined}
     />
   );
 };

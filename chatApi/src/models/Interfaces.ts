@@ -1,6 +1,7 @@
 export interface IUser {
   id: string;
   name: string;
+  lastSeen: Date;
 }
 
 export interface ITypingUser {
@@ -8,6 +9,8 @@ export interface ITypingUser {
   name: string;
   roomId?: string; // For private chat typing
 }
+
+export type MessageStatus = 'sending' | 'sent' | 'failed';
 
 export interface IMessage {
   message: string;
@@ -17,6 +20,8 @@ export interface IMessage {
   isSystemMessage?: boolean;
   roomId?: string; // For private chat support
   isPrivate?: boolean;
+  clientMessageId?: string; // For ack-based delivery confirmation
+  status?: MessageStatus;
 }
 
 export interface IPrivateChatRoom {

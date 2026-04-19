@@ -14,5 +14,8 @@ export { useMultiChat } from './application/useMultiChat';
 export { ChatService, chatService } from './infrastructure/ChatService';
 export { NotificationService, notificationService } from './infrastructure/NotificationService';
 
+// Shared
+export { SocketEvents } from './shared/SocketEvents';
+
 // Domain
 export type { IMessage, ITypingUser, IPrivateChatRoom, IChatContext } from './domain/Interfaces';

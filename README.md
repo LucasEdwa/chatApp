@@ -31,11 +31,14 @@ An **Express + Socket.IO** server that manages all real-time communication. Ther
 **Architecture:**
 
 ```
-handlers/SocketHandlers.ts  →  Event routing (all socket events)
+handlers/SocketHandlers.ts  →  Event routing (all socket events + ack callbacks)
 state/ChatState.ts          →  In-memory Maps (users, rooms, typing)
 utils/ChatUtils.ts          →  Room creation, user list helpers
 utils/TypingUtils.ts        →  Typing cleanup logic
 models/Interfaces.ts        →  Shared type definitions
+middleware/errorHandler.ts  →  Centralized error handling (Express + Socket.IO)
+middleware/sanitize.ts      →  XSS sanitization (messages + usernames)
+middleware/socketAuth.ts    →  Handshake auth + per-socket rate limiter
 ```
 
 **Deployment:** Multi-stage Docker build (compile TS → minimal Node Alpine production image). Deployed to **GCP Cloud Run** (europe-north1) with auto-scaling 0–10 instances.
@@ -108,7 +111,24 @@ Instead of scattered `try/catch` blocks, the backend uses:
 src/middleware/
   errorHandler.ts   →  AppError class + Express error middleware + Socket.IO error wrapper
   sanitize.ts       →  XSS sanitization for messages and usernames
+  socketAuth.ts     →  Handshake authentication middleware + per-socket rate limiter
 ```
+
+### Socket-Level Rate Limiting
+
+Beyond HTTP rate limiting, a **per-socket event throttler** (`SocketRateLimiter`) prevents a malicious client from flooding the server with events:
+
+- **30 events per 5-second window** per socket
+- Rate-limited events are silently dropped (message sends return `{ status: 'error' }` via ack)
+- State is cleaned up on disconnect to prevent memory leaks
+
+### Socket.IO Auth Middleware
+
+Connections are validated at the **handshake phase** before a socket is ever opened:
+
+- Username is sanitized during the initial connection
+- Invalid handshakes are rejected with `next(new Error(...))`  — the socket never connects
+- **JWT-ready**: the middleware includes a placeholder for token verification. When auth is added, unauthenticated users are blocked at the transport layer, not the application layer
 
 ---
 
@@ -127,7 +147,34 @@ Real-time apps need to survive unstable networks. The server and client are conf
 - **Auto re-registration**: on reconnect, the client re-emits `user-connected` so the server rebuilds its presence state
 - **Reconnect lifecycle hooks**: `reconnect`, `reconnect_attempt`, and `reconnect_failed` events are logged for observability
 
+### Last Seen (Heartbeat-Based Presence)
+
+- Client sends a `heartbeat` event every **30 seconds**
+- Server updates `user.lastSeen` timestamp on each heartbeat
+- Users list includes `lastSeen` for each user, enabling "Last seen 2 min ago" UI
+- Heartbeat is started on connect and stopped on disconnect
+
 **What this means in practice:** If a user loses Wi-Fi for 10 seconds, the client automatically reconnects, re-identifies itself, and the server recovers its room memberships. No manual refresh needed.
+
+---
+
+## Optimistic UI & Message Acknowledgments
+
+Messages use a **three-phase delivery model** inspired by WhatsApp:
+
+```
+1. User hits Send  →  Message appears immediately (status: "sending", opacity reduced)
+2. Server confirms →  Ack callback fires  →  Status upgrades to "sent" (checkmark)
+3. If ack fails    →  Status becomes "failed" (error icon + red label)
+```
+
+**How it works:**
+
+- Each message gets a `clientMessageId` (UUID-like) generated client-side
+- `sendMessage` uses **Socket.IO acknowledgments** (`socket.emit('event', data, callback)`) — the server calls the callback with `{ status: 'ok' }` or `{ status: 'error' }`
+- The optimistic message is inserted into React state **before** the server round-trip
+- Server echoes are **deduplicated**: own messages received from the server are skipped since they're already in state
+- The `MessageTimestamp` component renders a spinner for "sending", a checkmark for "sent", or an error icon for "failed"
 
 ---
 
@@ -171,20 +218,27 @@ Response: {
 ```
 Client                              Server
   │                                    │
+  │── [handshake + auth middleware] ──►│  ← Rejects invalid connections
+  │                                    │
   ├── user-connected ─────────────────►│
   │◄──────────────────── users-list ───┤
   │◄──────────────────── user-joined ──┤
   │                                    │
-  ├── send-chat-message ──────────────►│
+  ├── send-chat-message ──────────────►│  ← Rate-limited (30/5s)
+  │◄──────────── ack({ status: 'ok' }) │  ← Acknowledgment callback
   │◄──────────────────── chat-message ─┤
   │                                    │
   ├── start-private-chat ─────────────►│
   │◄────────── private-chat-started ───┤
   │◄────────── private-chat-invitation─┤  (to other user)
   │                                    │
-  ├── typing-start ───────────────────►│
+  ├── typing-start ───────────────────►│  ← Rate-limited
   │◄──────────────────── user-typing ──┤
   │         (auto-clears after 3s)     │
+  │                                    │
+  ├── heartbeat ──────────────────────►│  ← Every 30s (updates lastSeen)
+  │                                    │
+  │◄──── [connectionStateRecovery] ────┤  ← Auto-resync within 30s
 ```
 
 ---
@@ -214,9 +268,8 @@ Set `VITE_CHAT_API_URL` in the frontend `.env` to point to the backend URL.
 ## Future Improvements
 
 - Add a **persistence layer** (Redis or a database) so messages survive server restarts
-- Implement **authentication** (JWT with HTTP-only cookies)
-- Add **message read receipts**
+- Implement **JWT authentication** with HTTP-only cookies (socket auth middleware is already JWT-ready)
+- Add **message read receipts** (double checkmark)
 - Migrate to **cursor-based pagination with database** (current in-memory pagination is index-based)
 - Add **Redis adapter** for horizontal scaling across multiple server instances
 - Write **unit and integration tests**
-- Add **rate limiting** on the backend to prevent spam

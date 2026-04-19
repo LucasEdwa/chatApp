@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { setupSocketHandlers } from './handlers/SocketHandlers';
 import { errorHandler, AppError } from './middleware/errorHandler';
+import { socketAuthMiddleware } from './middleware/socketAuth';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -73,6 +74,9 @@ app.all('*', (req, _res, next) => {
 
 // ── Centralized Error Handler (must be last middleware) ──────
 app.use(errorHandler);
+
+// ── Socket.IO Auth Middleware ─────────────────────────────────
+io.use(socketAuthMiddleware);
 
 // ── Socket.IO Connection ─────────────────────────────────────
 io.on('connection', (socket: Socket) => {
