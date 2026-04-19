@@ -1,8 +1,10 @@
 # Real-Time Chat Application
 
-## Overview
+## What is this?
 
-A full-stack real-time chat application built with **TypeScript** end-to-end, featuring public group chat, private 1-on-1 messaging, typing indicators, browser notifications, theming, and mobile responsiveness. Communication is powered by **WebSockets** via Socket.IO.
+A full-stack real-time chat application built with **TypeScript** end-to-end. Users can join a public group chat, start private 1-on-1 conversations, see typing indicators, receive browser notifications, switch themes, and use it on mobile — all powered by **WebSockets** via Socket.IO with **MongoDB** for persistence and **JWT** for authentication.
+
+This isn't a tutorial project with a single `index.js`. It's structured like a production codebase: Clean Architecture on the frontend, repository pattern on the backend, runtime validation on both sides, CI/CD pipeline, Docker deployment, and server-side state management for unread counts that survive page refreshes.
 
 ---
 
@@ -326,6 +328,38 @@ The project uses **GitHub Actions** (`.github/workflows/ci.yml`) for automated C
 2. **On merge to `main`**: Automated deployment to GCP Cloud Run with secret injection (`MONGO_URI`, `JWT_SECRET`)
 
 Required GitHub Secrets: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `MONGO_URI`, `JWT_SECRET`
+
+---
+
+## Why I built it this way
+
+I wanted to go beyond a basic Socket.IO demo and tackle the real problems you hit when building production real-time apps:
+
+- **"What happens when the server restarts?"** — Messages are gone if you only use in-memory state. I added MongoDB so messages, rooms, and unread counts all persist. When a user reconnects, the server hydrates them with their history and unread badges automatically.
+
+- **"How do you prevent one bad client from crashing the server?"** — Every socket handler is wrapped in an error boundary (`wrapSocketHandler`) that catches both sync and async errors. On top of that, all incoming payloads are validated with Zod schemas before touching any business logic. Malformed data never reaches a handler.
+
+- **"How do you know a message was delivered?"** — Socket.IO acknowledgments give the sender a callback confirming the server processed the message. The UI uses this for a three-phase model: sending → sent → failed, so users always know what happened.
+
+- **"Why Clean Architecture for a chat app?"** — Because the presentation layer shouldn't know about Socket.IO. Components only talk to hooks, hooks talk to services, services manage the socket. Swapping Socket.IO for WebTransport or SSE would only touch the infrastructure layer.
+
+- **"Why server-side unread counts?"** — Client-side counts reset on refresh. The server tracks unreads per user per room in MongoDB with atomic `$inc` operations, so counts are always accurate, even if the user has multiple tabs or reconnects hours later.
+
+---
+
+## Things I'm proud of
+
+- **The full validation pipeline** — Zod schemas on both client and server, XSS sanitization, per-socket rate limiting, JWT auth at the handshake phase. A malicious client can't inject scripts, flood events, or connect without a valid token.
+
+- **Deterministic room IDs by username** — Private rooms use `[alice, bob].sort().join('-')` instead of socket IDs. This means the room `alice-bob` is the same whether Alice or Bob initiates, and it persists across sessions since it's tied to identity, not ephemeral connection IDs.
+
+- **The async error wrapper** — `wrapSocketHandler` handles both sync throws and async rejections in a single HOF. One line wraps any handler, and no unhandled promise rejection can crash the process.
+
+- **Real reconnection resilience** — Socket.IO's `connectionStateRecovery` restores rooms within 30s, the client auto-re-registers on reconnect, and the server re-sends unread counts and message history. The user doesn't need to refresh.
+
+- **Optimistic UI with deduplication** — Messages appear instantly, get confirmed via ack callbacks, and server echoes are skipped since the message is already in state. It feels instant without double-rendering.
+
+- **The CI pipeline actually catches things** — `tsc --noEmit` + `npm run build` on both projects in GitHub Actions. When I had an unused import, CI caught it before it hit production.
 
 ---
 
