@@ -74,8 +74,6 @@ jobs:
     needs: [backend-ci, frontend-ci]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    env:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
     defaults:
       run:
         working-directory: chatApi
